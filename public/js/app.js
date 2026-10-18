@@ -82,12 +82,28 @@ class AppManager {
         } else if (view === 'dashboard') {
             this.renderDashboardPlaceholder(container);
         } else if (view === 'projects') {
-            container.innerHTML = `<div class="empty-state">
-                <div class="empty-state-svg">${window.icon('kanban', 64)}</div>
-                <h2 class="empty-state-title">Projects Hub</h2>
-                <p class="empty-state-desc">Projects module is coming in Phase 2!</p>
-                <button class="btn btn-primary" onclick="window.app.navigate('dashboard')">Back to Dashboard</button>
-            </div>`;
+            window.projects.renderProjectsView(container);
+        } else if (view === 'board') {
+            // Placeholder for Phase 3 Kanban board
+            container.innerHTML = `
+                <div style="margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <button class="btn btn-ghost btn-sm" onclick="window.app.navigate('projects')" style="margin-bottom: 8px;">
+                            ${window.icon('arrow-right', 14, 'style="transform:rotate(180deg)"')} Back to Projects
+                        </button>
+                        <h1 style="font-size: 1.875rem;">Project Board</h1>
+                        <p style="color: var(--text-muted); font-size: 0.875rem;">Kanban columns, task cards, and drag & drop arrive in Phase 3.</p>
+                    </div>
+                    <button class="btn btn-secondary" onclick="window.projects.openSettingsModal(${params.projectId || 1})">
+                        ${window.icon('users', 16)} Team & Settings
+                    </button>
+                </div>
+                <div class="empty-state">
+                    <div class="empty-state-svg">${window.icon('kanban', 64)}</div>
+                    <h2 class="empty-state-title">Ready for Phase 3: Kanban Board</h2>
+                    <p class="empty-state-desc">The project structure and columns are created in the database. Phase 3 will render the interactive drag-and-drop board.</p>
+                </div>
+            `;
         } else if (view === 'settings') {
             container.innerHTML = `<div class="empty-state">
                 <div class="empty-state-svg">${window.icon('settings', 64)}</div>
