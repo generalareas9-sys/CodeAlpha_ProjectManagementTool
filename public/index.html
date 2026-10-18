@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Taskora - Plan. Collaborate. Deliver. | Modern Project Management</title>
+    <meta name="description" content="A modern full-stack project management platform with real-time Kanban boards, role permissions, checklists, and activity tracking.">
+    <meta name="author" content="Osman Seid Ebrahim">
+
+    <!-- Open Graph / Meta -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="http://localhost:5000/">
+    <meta property="og:title" content="Taskora - Plan. Collaborate. Deliver.">
+    <meta property="og:description" content="Next-generation project management platform with Kanban boards, real-time sync, and granular permissions.">
+    <meta property="og:image" content="/og-image.png">
+
+    <!-- Favicons -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+
+    <!-- Stylesheets -->
+    <link rel="stylesheet" href="/css/theme.css">
+    <link rel="stylesheet" href="/css/main.css">
+
+    <!-- Immediate Theme Application Script (prevents FOUC) -->
+    <script>
+        (function() {
+            try {
+                var saved = localStorage.getItem('taskora_theme');
+                if (saved === 'dark' || saved === 'light') {
+                    document.documentElement.setAttribute('data-theme', saved);
+                } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                    document.documentElement.setAttribute('data-theme', 'dark');
+                }
+            } catch (e) {}
+        })();
+    </script>
+</head>
+<body>
+    <!-- Skip to main content accessibility link -->
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+
+    <!-- Top Navigation Bar -->
+    <header class="navbar" role="banner">
+        <div class="navbar-left">
+            <div class="navbar-brand" id="brand-logo-btn" onclick="window.app.navigate('landing')" role="button" tabindex="0" aria-label="Taskora Home">
+                <img src="/logo.svg" alt="Taskora Logo" class="brand-logo-img">
+            </div>
+        </div>
+
+        <!-- Global Search Bar (Hidden for logged out visitors) -->
+        <div class="navbar-center" id="navbar-search-container" style="display: none;">
+            <div class="global-search-container">
+                <span class="search-icon-left" data-icon="search" data-icon-size="16"></span>
+                <input type="text" id="navbar-search-input" class="form-control" placeholder="Search tasks, labels, members..." aria-label="Search tasks and projects">
+                <kbd class="search-shortcut-kbd">/</kbd>
+            </div>
+        </div>
+
+        <!-- Navbar Right Controls -->
+        <div class="navbar-right">
+            <!-- Theme Toggle Button -->
+            <button id="theme-toggle-btn" class="btn btn-icon" onclick="window.theme.toggleTheme()" aria-label="Toggle dark/light theme" title="Toggle theme">
+                <!-- Icon injected by theme.js -->
+            </button>
+
+            <!-- Logged In User Nav Controls -->
+            <div id="navbar-user-section" style="display: none; align-items: center; gap: 12px;">
+                <!-- Notification Bell Button -->
+                <button class="btn btn-icon notification-bell-btn" id="notifications-bell-btn" onclick="window.app.navigate('notifications')" aria-label="View notifications">
+                    <span data-icon="bell" data-icon-size="20"></span>
+                    <span class="notification-unread-dot" id="unread-dot"></span>
+                </button>
+
+                <!-- User Dropdown Menu -->
+                <div class="user-dropdown-container">
+                    <button class="user-menu-btn" id="user-menu-btn" aria-label="Open user menu" aria-haspopup="true">
+                        <div class="avatar avatar-sm" id="user-avatar-display">A</div>
+                        <span data-icon="chevron-down" data-icon-size="14" style="color: var(--text-muted);"></span>
+                    </button>
+                    <div class="dropdown-menu" id="user-dropdown-menu" role="menu">
+                        <div class="dropdown-header">
+                            <div class="dropdown-user-name" id="dropdown-user-name">Alex Morgan</div>
+                            <div class="dropdown-user-email" id="dropdown-user-email">alex@taskora.io</div>
+                        </div>
+                        <div class="dropdown-item" onclick="window.app.navigate('dashboard')" role="menuitem">
+                            <span data-icon="layout-dashboard" data-icon-size="16"></span>
+                            <span>Dashboard</span>
+                        </div>
+                        <div class="dropdown-item" onclick="window.app.navigate('settings')" role="menuitem">
+                            <span data-icon="settings" data-icon-size="16"></span>
+                            <span>Settings</span>
+                        </div>
+                        <div class="dropdown-divider"></div>
+                        <div class="dropdown-item text-danger" onclick="window.auth.logout()" role="menuitem">
+                            <span data-icon="log-out" data-icon-size="16"></span>
+                            <span>Log Out</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Logged Out Guest Controls -->
+            <div id="navbar-guest-section" style="display: flex; align-items: center; gap: 10px;">
+                <button class="btn btn-ghost btn-sm" onclick="window.app.navigate('auth', { tab: 'login' })">
+                    Sign In
+                </button>
+                <button class="btn btn-primary btn-sm" onclick="window.app.navigate('auth', { tab: 'register' })">
+                    Get Started
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- App Body Layout -->
+    <div class="app-layout">
+        <!-- Sidebar Navigation (Hidden for guests) -->
+        <aside class="sidebar" id="app-sidebar" style="display: none;" aria-label="Primary Navigation">
+            <div class="sidebar-section">
+                <div class="sidebar-section-title">Navigation</div>
+                <ul class="sidebar-nav-list">
+                    <li class="sidebar-nav-item active" data-view="dashboard" onclick="window.app.navigate('dashboard')">
+                        <span data-icon="layout-dashboard" data-icon-size="18"></span>
+                        <span>Dashboard</span>
+                    </li>
+                    <li class="sidebar-nav-item" data-view="tasks" onclick="window.app.navigate('tasks')">
+                        <span data-icon="check-square" data-icon-size="18"></span>
+                        <span>My Tasks</span>
+                        <span class="badge-count" id="sidebar-my-tasks-count">0</span>
+                    </li>
+                    <li class="sidebar-nav-item" data-view="notifications" onclick="window.app.navigate('notifications')">
+                        <span data-icon="bell" data-icon-size="18"></span>
+                        <span>Notifications</span>
+                        <span class="badge-count" id="sidebar-notifications-count">0</span>
+                    </li>
+                </ul>
+            </div>
+
+            <div class="sidebar-section" style="flex: 1;">
+                <div class="sidebar-section-title">
+                    <span>Projects</span>
+                    <button class="btn btn-icon btn-sm" style="padding: 2px;" onclick="window.app.showToast('info', 'Projects', 'Project creation active in Phase 2!')" aria-label="Create new project" title="New Project">
+                        <span data-icon="plus" data-icon-size="14"></span>
+                    </button>
+                </div>
+                <ul class="sidebar-nav-list" id="sidebar-projects-list">
+                    <li class="sidebar-nav-item" data-view="projects" onclick="window.app.navigate('projects')">
+                        <span class="project-color-dot" style="background-color: #6366F1;"></span>
+                        <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Website Redesign</span>
+                    </li>
+                    <li class="sidebar-nav-item" data-view="projects" onclick="window.app.navigate('projects')">
+                        <span class="project-color-dot" style="background-color: #10B981;"></span>
+                        <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Mobile App Launch</span>
+                    </li>
+                    <li class="sidebar-nav-item" data-view="projects" onclick="window.app.navigate('projects')">
+                        <span class="project-color-dot" style="background-color: #F59E0B;"></span>
+                        <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Marketing Campaign</span>
+                    </li>
+                </ul>
+            </div>
+
+            <div class="sidebar-section">
+                <ul class="sidebar-nav-list">
+                    <li class="sidebar-nav-item" data-view="settings" onclick="window.app.navigate('settings')">
+                        <span data-icon="settings" data-icon-size="18"></span>
+                        <span>Settings</span>
+                    </li>
+                </ul>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content" id="main-content" role="main">
+            <div id="view-container">
+                <!-- Dynamically rendered by app.js -->
+            </div>
+        </main>
+    </div>
+
+    <!-- Mobile Bottom Tab Bar -->
+    <nav class="mobile-tab-bar" id="mobile-tab-bar" aria-label="Mobile Navigation" style="display: none;">
+        <button class="mobile-tab-btn active" data-view="dashboard" onclick="window.app.navigate('dashboard')" aria-label="Dashboard">
+            <span data-icon="layout-dashboard" data-icon-size="20"></span>
+            <span>Home</span>
+        </button>
+        <button class="mobile-tab-btn" data-view="projects" onclick="window.app.navigate('projects')" aria-label="Projects">
+            <span data-icon="kanban" data-icon-size="20"></span>
+            <span>Projects</span>
+        </button>
+        <button class="mobile-tab-btn" data-view="tasks" onclick="window.app.navigate('tasks')" aria-label="My Tasks">
+            <span data-icon="check-square" data-icon-size="20"></span>
+            <span>Tasks</span>
+        </button>
+        <button class="mobile-tab-btn" data-view="notifications" onclick="window.app.navigate('notifications')" aria-label="Notifications">
+            <span data-icon="bell" data-icon-size="20"></span>
+            <span>Alerts</span>
+        </button>
+        <button class="mobile-tab-btn" data-view="settings" onclick="window.app.navigate('settings')" aria-label="Settings">
+            <span data-icon="settings" data-icon-size="20"></span>
+            <span>Settings</span>
+        </button>
+    </nav>
+
+    <!-- Global Toast Container -->
+    <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="true"></div>
+
+    <!-- Scripts -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/js/icons.js"></script>
+    <script src="/js/theme.js"></script>
+    <script src="/js/api.js"></script>
+    <script src="/js/auth.js"></script>
+    <script src="/js/app.js"></script>
+</body>
+</html>
