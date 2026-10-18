@@ -12,6 +12,8 @@ require('./db/database');
 
 const { initSocket } = require('./socket');
 const authRoutes = require('./routes/authRoutes');
+const userRoutes = require('./routes/userRoutes');
+const projectRoutes = require('./routes/projectRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -58,6 +60,8 @@ app.use(express.static(publicDir));
 
 // API Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/projects', projectRoutes);
 
 // Placeholder / stub for future route modules (will be added in phases 2-6)
 // app.use('/api/users', userRoutes);
