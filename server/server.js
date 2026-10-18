@@ -14,8 +14,12 @@ const { initSocket } = require('./socket');
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const projectRoutes = require('./routes/projectRoutes');
+const columnRoutes = require('./routes/columnRoutes');
+const taskRoutes = require('./routes/taskRoutes');
+const commentRoutes = require('./routes/commentRoutes');
 
 const app = express();
+
 const server = http.createServer(app);
 
 // Initialize Socket.io
@@ -62,12 +66,9 @@ app.use(express.static(publicDir));
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/projects', projectRoutes);
-
-// Placeholder / stub for future route modules (will be added in phases 2-6)
-// app.use('/api/users', userRoutes);
-// app.use('/api/projects', projectRoutes);
-// app.use('/api/notifications', notificationRoutes);
-// app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/columns', columnRoutes);
+app.use('/api/tasks', taskRoutes);
+app.use('/api/comments', commentRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
