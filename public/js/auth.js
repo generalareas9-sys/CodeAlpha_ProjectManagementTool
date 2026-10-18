@@ -106,6 +106,11 @@ class AuthManager {
             if (sidebar) sidebar.style.display = 'flex';
             if (mobileTabs) mobileTabs.style.display = 'flex';
 
+            // Load projects into sidebar
+            if (window.projects) {
+                window.projects.loadProjects();
+            }
+
             // Update user avatar
             const avatarEl = document.getElementById('user-avatar-display');
             if (avatarEl) {
