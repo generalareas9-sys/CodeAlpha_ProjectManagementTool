@@ -6,7 +6,7 @@
   "type": "commonjs",
   "scripts": {
     "start": "node server/server.js",
-    "dev": "nodemon server/server.js",
+    "dev": "node --watch server/server.js",
     "seed": "node server/db/seed.js",
     "test": "node tests/test-api.js"
   },
