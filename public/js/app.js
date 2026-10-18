@@ -84,26 +84,7 @@ class AppManager {
         } else if (view === 'projects') {
             window.projects.renderProjectsView(container);
         } else if (view === 'board') {
-            // Placeholder for Phase 3 Kanban board
-            container.innerHTML = `
-                <div style="margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between;">
-                    <div>
-                        <button class="btn btn-ghost btn-sm" onclick="window.app.navigate('projects')" style="margin-bottom: 8px;">
-                            ${window.icon('arrow-right', 14, 'style="transform:rotate(180deg)"')} Back to Projects
-                        </button>
-                        <h1 style="font-size: 1.875rem;">Project Board</h1>
-                        <p style="color: var(--text-muted); font-size: 0.875rem;">Kanban columns, task cards, and drag & drop arrive in Phase 3.</p>
-                    </div>
-                    <button class="btn btn-secondary" onclick="window.projects.openSettingsModal(${params.projectId || 1})">
-                        ${window.icon('users', 16)} Team & Settings
-                    </button>
-                </div>
-                <div class="empty-state">
-                    <div class="empty-state-svg">${window.icon('kanban', 64)}</div>
-                    <h2 class="empty-state-title">Ready for Phase 3: Kanban Board</h2>
-                    <p class="empty-state-desc">The project structure and columns are created in the database. Phase 3 will render the interactive drag-and-drop board.</p>
-                </div>
-            `;
+            window.kanban.renderBoardView(container, params.projectId);
         } else if (view === 'settings') {
             container.innerHTML = `<div class="empty-state">
                 <div class="empty-state-svg">${window.icon('settings', 64)}</div>
@@ -552,7 +533,19 @@ class AppManager {
             // 'N': new task shortcut
             if (e.key === 'n' || e.key === 'N') {
                 if (window.auth.currentUser) {
-                    this.showToast('info', 'Quick Task (N)', 'Task creation modal will open here once projects are loaded.');
+                    if (this.currentView === 'board' && window.kanban) {
+                        e.preventDefault();
+                        window.kanban.openAddTaskModal();
+                    } else if (window.projects && window.projects.projects.length > 0) {
+                        e.preventDefault();
+                        const pId = window.projects.projects[0].id;
+                        window.kanban.projectId = pId;
+                        window.kanban.project = window.projects.projects[0];
+                        window.kanban.columns = window.projects.projects[0].columns || [];
+                        window.kanban.openAddTaskModal();
+                    } else {
+                        this.showToast('info', 'No Projects', 'Create a project first before adding tasks.');
+                    }
                 }
             }
         });
