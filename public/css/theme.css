@@ -1,131 +1,70 @@
-/* Taskora Theme & Design Tokens */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap');
-
 :root {
-    /* Color Palette - Default Light Theme */
-    --bg: #F5F6FF;
-    --surface: #FFFFFF;
-    --surface-2: #F0F1FB;
-    --surface-hover: #E8EAF8;
-    --border: #E3E5F4;
-    --border-hover: #CBD0ED;
-    --text: #14152B;
-    --text-muted: #5B5F80;
-    --text-subtle: #797E9E;
-
-    /* Brand Gradient & Colors */
-    --brand-gradient: linear-gradient(135deg, #6366F1 0%, #8B5CF6 50%, #EC4899 100%);
-    --brand-primary: #6366F1;
-    --brand-secondary: #8B5CF6;
-    --brand-accent: #EC4899;
-    --brand-primary-hover: #4F46E5;
-    --brand-primary-light: rgba(99, 102, 241, 0.12);
-    --brand-primary-border: rgba(99, 102, 241, 0.25);
-
-    /* Priority Colors (WCAG compliant) */
-    --priority-low: #22C55E;
-    --priority-low-bg: rgba(34, 197, 94, 0.12);
-    --priority-low-text: #15803D;
-
-    --priority-medium: #F59E0B;
-    --priority-medium-bg: rgba(245, 158, 11, 0.12);
-    --priority-medium-text: #B45309;
-
-    --priority-high: #F97316;
-    --priority-high-bg: rgba(249, 115, 22, 0.12);
-    --priority-high-text: #C2410C;
-
-    --priority-urgent: #EF4444;
-    --priority-urgent-bg: rgba(239, 68, 68, 0.12);
-    --priority-urgent-text: #B91C1C;
-
-    /* Semantic States */
-    --danger: #EF4444;
-    --danger-surface: #FEF2F2;
-    --danger-border: #FCA5A5;
-    --success: #10B981;
-    --success-surface: #ECFDF5;
-    --warning: #F59E0B;
-    --info: #3B82F6;
-
-    /* Shadows */
-    --shadow-sm: 0 1px 3px rgba(20, 21, 43, 0.05), 0 1px 2px rgba(20, 21, 43, 0.03);
-    --shadow-md: 0 4px 12px -2px rgba(20, 21, 43, 0.08), 0 2px 6px -1px rgba(20, 21, 43, 0.04);
-    --shadow-lg: 0 12px 28px -4px rgba(20, 21, 43, 0.12), 0 4px 12px -2px rgba(20, 21, 43, 0.06);
-    --shadow-xl: 0 20px 38px -6px rgba(20, 21, 43, 0.16), 0 8px 16px -4px rgba(20, 21, 43, 0.08);
-
-    /* Radii */
-    --radius-sm: 8px;
-    --radius-md: 12px;
-    --radius-lg: 16px;
-    --radius-xl: 20px;
-    --radius-full: 9999px;
-
-    /* Typography */
-    --font-heading: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-
-    /* Transitions */
-    --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
-    --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
-    --transition-slow: 250ms cubic-bezier(0.4, 0, 0.2, 1);
-
-    /* Layout metrics */
-    --navbar-height: 64px;
-    --sidebar-width: 260px;
-    --mobile-nav-height: 60px;
-
-    /* Focus ring */
-    --focus-ring: 0 0 0 3px rgba(99, 102, 241, 0.35);
+  --bg: #F5F6FF;
+  --surface: #FFFFFF;
+  --surface-2: #F0F1FB;
+  --surface-3: #E9EAF7;
+  --border: #E3E5F4;
+  --border-strong: #D4D7EC;
+  --text: #14152B;
+  --text-muted: #5B5F80;
+  --text-soft: #777B99;
+  --brand-1: #6366F1;
+  --brand-2: #8B5CF6;
+  --brand-3: #EC4899;
+  --brand-gradient: linear-gradient(135deg, #6366F1, #8B5CF6, #EC4899);
+  --success: #22C55E;
+  --warning: #F59E0B;
+  --high: #F97316;
+  --urgent: #EF4444;
+  --info: #3B82F6;
+  --shadow-sm: 0 2px 8px rgba(45, 49, 93, 0.06);
+  --shadow-md: 0 12px 30px rgba(45, 49, 93, 0.10);
+  --shadow-lg: 0 24px 60px rgba(45, 49, 93, 0.14);
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --focus: 0 0 0 3px rgba(99, 102, 241, 0.25);
+  --ease: 180ms ease;
+  color-scheme: light;
 }
 
-/* Dark Theme Variables */
 [data-theme="dark"] {
-    --bg: #0F1020;
-    --surface: #17182B;
-    --surface-2: #1F2038;
-    --surface-hover: #262846;
-    --border: #2C2E4A;
-    --border-hover: #3E4166;
-    --text: #F3F4FB;
-    --text-muted: #A5A9C6;
-    --text-subtle: #8489AB;
-
-    --brand-primary-light: rgba(99, 102, 241, 0.2);
-    --brand-primary-border: rgba(99, 102, 241, 0.4);
-
-    --priority-low-text: #4ADE80;
-    --priority-low-bg: rgba(34, 197, 94, 0.18);
-
-    --priority-medium-text: #FBBF24;
-    --priority-medium-bg: rgba(245, 158, 11, 0.18);
-
-    --priority-high-text: #FB923C;
-    --priority-high-bg: rgba(249, 115, 22, 0.18);
-
-    --priority-urgent-text: #F87171;
-    --priority-urgent-bg: rgba(239, 68, 68, 0.18);
-
-    --danger-surface: rgba(239, 68, 68, 0.12);
-    --danger-border: rgba(239, 68, 68, 0.3);
-    --success-surface: rgba(16, 185, 129, 0.12);
-
-    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.4);
-    --shadow-lg: 0 12px 30px rgba(0, 0, 0, 0.5);
-    --shadow-xl: 0 20px 40px rgba(0, 0, 0, 0.6);
-
-    --focus-ring: 0 0 0 3px rgba(139, 92, 246, 0.45);
+  --bg: #0F1020;
+  --surface: #17182B;
+  --surface-2: #1F2038;
+  --surface-3: #262846;
+  --border: #2C2E4A;
+  --border-strong: #3A3D5D;
+  --text: #F3F4FB;
+  --text-muted: #A5A9C6;
+  --text-soft: #8589A8;
+  --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.16);
+  --shadow-md: 0 14px 34px rgba(0, 0, 0, 0.24);
+  --shadow-lg: 0 28px 70px rgba(0, 0, 0, 0.34);
+  --focus: 0 0 0 3px rgba(139, 92, 246, 0.35);
+  color-scheme: dark;
 }
 
-/* Respect user's motion preference */
+* { box-sizing: border-box; }
+html { min-width: 320px; background: var(--bg); }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+button, input, textarea, select { font: inherit; }
+button, a { -webkit-tap-highlight-color: transparent; }
+a { color: inherit; text-decoration: none; }
+::selection { color: #fff; background: var(--brand-2); }
+:focus-visible { outline: none; box-shadow: var(--focus); }
+
+@media (prefers-color-scheme: dark) {
+  html[data-theme="system"] { --bg: #0F1020; --surface: #17182B; --surface-2: #1F2038; --surface-3: #262846; --border: #2C2E4A; --border-strong: #3A3D5D; --text: #F3F4FB; --text-muted: #A5A9C6; --text-soft: #8589A8; color-scheme: dark; }
+}
+
 @media (prefers-reduced-motion: reduce) {
-    *,
-    *::before,
-    *::after {
-        animation-duration: 0.01ms !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: 0.01ms !important;
-        scroll-behavior: auto !important;
-    }
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
