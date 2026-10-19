@@ -5,6 +5,9 @@
   "description": "Taskora project management tool for CodeAlpha Full Stack Internship Task 3",
   "main": "server.js",
   "packageManager": "npm@10.9.2",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
@@ -25,7 +28,9 @@
     "socket.io": "^4.8.1"
   },
   "devDependencies": {
-    "playwright": "^1.49.1",
     "socket.io-client": "^4.8.1"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.49.1"
   }
 }
