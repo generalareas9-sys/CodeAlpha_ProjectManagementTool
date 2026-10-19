@@ -1,0 +1,13 @@
+{
+  "routes": [
+    { "path": "/", "title": "Taskora — Plan. Collaborate. Deliver." },
+    { "path": "/login", "title": "Log in — Taskora" },
+    { "path": "/register", "title": "Create account — Taskora" },
+    { "path": "/app", "title": "Workspace — Taskora" },
+    { "path": "/projects", "title": "Projects — Taskora" },
+    { "path": "/dashboard", "title": "Dashboard — Taskora" },
+    { "path": "/projects/:id", "title": "Project — Taskora" },
+    { "path": "/notifications", "title": "Notifications — Taskora" },
+    { "path": "/settings", "title": "Settings — Taskora" }
+  ]
+}
