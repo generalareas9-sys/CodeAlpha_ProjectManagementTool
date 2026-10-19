@@ -1,38 +1,31 @@
 {
-  "name": "codealpha-projectmanagementtool",
+  "name": "taskora",
   "version": "1.0.0",
-  "description": "Taskora - Full-stack Project Management Tool (Trello + Asana style) for CodeAlpha Full Stack Internship Task 3",
-  "main": "server/server.js",
-  "type": "commonjs",
+  "private": true,
+  "description": "Taskora project management tool for CodeAlpha Full Stack Internship Task 3",
+  "main": "server.js",
+  "packageManager": "npm@10.9.2",
   "scripts": {
-    "start": "node server/server.js",
-    "dev": "node --watch server/server.js",
-    "seed": "node server/db/seed.js",
-    "test": "node tests/test-api.js"
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "seed": "node scripts/seed.js",
+    "screenshots": "node scripts/take-screenshots.js",
+    "test": "node --test test-api.js"
   },
-  "keywords": [
-    "project-management",
-    "kanban",
-    "taskora",
-    "codealpha",
-    "fullstack",
-    "express",
-    "sqlite",
-    "socketio"
-  ],
-  "author": "Osman Seid Ebrahim",
-  "license": "MIT",
   "dependencies": {
-    "bcryptjs": "^3.0.3",
+    "bcryptjs": "^2.4.3",
     "better-sqlite3": "^13.0.3",
     "cookie-parser": "^1.4.7",
-    "cors": "^2.8.6",
-    "dotenv": "^18.0.8",
-    "express": "^5.3.0",
-    "express-rate-limit": "^8.7.1",
-    "express-validator": "^7.3.2",
-    "helmet": "^8.3.0",
-    "jsonwebtoken": "^9.0.3",
-    "socket.io": "^4.8.4"
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "express-validator": "^7.2.1",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.1",
+    "socket.io-client": "^4.8.1"
   }
 }
