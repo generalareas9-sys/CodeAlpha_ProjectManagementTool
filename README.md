@@ -45,6 +45,34 @@ npm install                # installs dependencies (better‑sqlite3 pre‑built
 cp .env.example .env       # copy template and set JWT_SECRET and other vars
 npm run seed               # create demo accounts and projects
 npm start                  # http://localhost:5000
+
+## Run Locally
+
+1. Clone this repository.
+2. Install dependencies:
+
+   ```bash
+   npm install
+   ```
+
+3. Configure your `.env` file with the required environment variables.
+4. Seed demo data if needed:
+
+   ```bash
+   npm run seed
+   ```
+
+5. Start the application:
+
+   ```bash
+   npm start
+   ```
+
+6. Open the application in your browser:
+
+   http://localhost:5000/
+
+**Note:** The local URL works only on the computer running the application.
 ```
 
 > **Windows PowerShell:** use `Copy-Item .env.example .env` instead of `cp`.
