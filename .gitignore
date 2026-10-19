@@ -1,8 +1,11 @@
 node_modules/
+.venv/
 .env
 *.db
 *.db-shm
 *.db-wal
 uploads/
 .DS_Store
-screenshots/
+
+# local runtime artifacts
+data/
