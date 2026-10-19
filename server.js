@@ -106,7 +106,7 @@ notifyDueSoon(io);
 
 if (require.main === module) {
   server.listen(port, '0.0.0.0', () => {
-    console.log(`Taskora listening on http://0.0.0.0:${port}`);
+    console.log(`Taskora listening on http://localhost:${port}/`);
   });
 }
 
