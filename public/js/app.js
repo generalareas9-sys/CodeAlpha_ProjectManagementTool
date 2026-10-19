@@ -1,621 +1,154 @@
-// Taskora Main Application & Router
+import { api } from './api.js';
+import { icon } from './icons.js';
 
-class AppManager {
-    constructor() {
-        this.currentView = 'landing';
-        this.viewParams = {};
-        this.activeModal = null;
-    }
+const root = document.querySelector('#app');
+const storedTheme = localStorage.getItem('taskora-theme');
+const preferredTheme = storedTheme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+const state = { user: null, theme: preferredTheme, dashboard: null, projects: [], project: null, tasks: [], projectLabels: [], dragTaskId: null, assignedOnly: false, viewMode: 'board', listSort: 'dueDate', filters: { search: '', priority: '', labelId: '', due: '', assignee: '' }, notifications: [], unreadNotifications: 0, searchQuery: '', socket: null, currentRoom: null, typingUsers: new Map() };
 
-    async init() {
-        // Setup icons across static markup
-        this.renderStaticIcons();
+function applyTheme(theme = state.theme) {
+  state.theme = theme;
+  document.documentElement.dataset.theme = theme;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#0F1020' : '#F5F6FF');
+}
+applyTheme();
+function updateScrollChrome() {
+  const scrolled = window.scrollY > 8 || [...document.querySelectorAll('.main-content')].some((main) => main.scrollTop > 8);
+  document.querySelectorAll('.landing-nav, .topbar').forEach((header) => header.classList.toggle('scrolled', scrolled));
+}
+window.addEventListener('scroll', updateScrollChrome, { passive: true });
+window.addEventListener('resize', updateScrollChrome, { passive: true });
+document.addEventListener('scroll', updateScrollChrome, { passive: true, capture: true });
+function escapeHtml(value = '') { return String(value).replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char])); }
+function initials(user) { const value = user?.displayName || user?.username || 'T'; return value.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase(); }
+function logoMarkup() { return `<a class="brand" href="/" data-nav aria-label="Taskora home"><img class="brand-logo logo-light" src="/assets/logo.svg" alt="Taskora" /><img class="brand-logo logo-dark" src="/assets/logo-dark.svg" alt="Taskora" /></a>`; }
+function button(label, action, extra = '', attrs = '') { return `<button class="btn ${extra}" type="button" data-action="${action}" ${attrs}>${label}</button>`; }
+function formatRelative(dateValue) { if (!dateValue) return 'Just now'; const diff = Math.max(0, Date.now() - new Date(`${String(dateValue).replace(' ', 'T')}Z`).getTime()); const minutes = Math.floor(diff / 60000); if (minutes < 1) return 'Just now'; if (minutes < 60) return `${minutes}m ago`; const hours = Math.floor(minutes / 60); if (hours < 24) return `${hours}h ago`; return `${Math.floor(hours / 24)}d ago`; }
+function plural(count, singular, pluralForm = `${singular}s`) { return `${count} ${count === 1 ? singular : pluralForm}`; }
+function roleTone(role) { return role === 'Owner' ? 'role-owner' : role === 'Admin' ? 'role-admin' : role === 'Viewer' ? 'role-viewer' : 'role-member'; }
+function isManager(role) { return role === 'Owner' || role === 'Admin'; }
+function canEditTasks(role) { return role !== 'Viewer'; }
+function emptyState(title, body, cta = '') { return `<div class="empty-state"><div class="empty-illustration">${icon('layers', 27)}</div><h3>${title}</h3><p>${body}</p>${cta}</div>`; }
+function notificationItem(notification, compact = false) { return `<article class="notification-item ${notification.readAt ? '' : 'unread'}" data-notification-id="${notification.id}"><span class="notification-type-icon">${icon(notification.type === 'mention' ? 'at' : notification.type === 'assignment' ? 'user' : notification.type === 'due_soon' ? 'clock' : 'bell', 15)}</span><div><strong>${escapeHtml(notification.title)}</strong><p>${escapeHtml(notification.body)}</p><time>${formatRelative(notification.createdAt)}</time></div>${!notification.readAt ? `<button type="button" class="notification-read" data-action="read-notification" data-notification-id="${notification.id}" aria-label="Mark notification read">${icon('check', 13)}</button>` : ''}</article>`; }
+function notificationPopover() { return `<div class="notification-popover" id="notification-popover"><div class="notification-popover-head"><strong>Notifications</strong><button type="button" class="text-button" data-action="read-all-notifications">Mark all read</button></div><div class="notification-popover-list">${state.notifications.length ? state.notifications.slice(0, 6).map((item) => notificationItem(item, true)).join('') : `<div class="notification-empty">You’re all caught up.</div>`}</div><a href="/notifications" data-nav class="notification-view-all">View notification center ${icon('arrow', 13)}</a></div>`; }
+function refreshNotificationBadge() { const badges = document.querySelectorAll('.notification-badge'); badges.forEach((badge) => { badge.textContent = state.unreadNotifications > 99 ? '99+' : String(state.unreadNotifications); badge.hidden = state.unreadNotifications < 1; }); }
+function setupSocket() {
+  if (!state.user || !window.io) return;
+  if (state.socket?.connected) return;
+  state.socket = window.io({ withCredentials: true });
+  state.socket.on('connect_error', () => {});
+  state.socket.on('notification:new', (notification) => { state.notifications = [notification, ...state.notifications.filter((item) => item.id !== notification.id)].slice(0, 50); state.unreadNotifications += notification.readAt ? 0 : 1; refreshNotificationBadge(); showToast(notification.title); });
+  const refreshBoard = (payload) => { if (state.project && Number(payload?.task?.projectId || payload?.projectId) === Number(state.project.id) && !document.querySelector('[data-task-drawer]')) render(); };
+  state.socket.on('task:created', refreshBoard); state.socket.on('task:updated', refreshBoard); state.socket.on('task:moved', refreshBoard); state.socket.on('task:deleted', refreshBoard);
+  state.socket.on('comment:added', (payload) => { if (Number(payload?.taskId) === Number(document.querySelector('[name="taskId"]')?.value)) openTaskDrawer(Number(payload.taskId)); }); state.socket.on('member:joined', (payload) => { if (Number(payload?.projectId) === Number(state.project?.id)) { showToast(`${payload.member?.displayName || 'A member'} joined the project.`); render(); } });
+  state.socket.on('presence:update', (payload) => { document.querySelectorAll('.presence-count').forEach((node) => { node.textContent = `${payload.online || 0} online`; }); const presence = document.querySelector('#presence-list'); if (presence && Number(payload.projectId) === Number(state.project?.id)) presence.innerHTML = `${(payload.users || []).slice(0, 5).map((user) => `<span class="avatar" style="background:${escapeHtml(user.avatarColor || '#6366F1')}" title="${escapeHtml(user.displayName || user.username)}">${escapeHtml(initials(user))}</span>`).join('')}<span class="presence-count">${payload.online || 0} online</span>`; });
+  state.socket.on('typing:start', (payload) => { if (Number(payload.taskId) !== Number(document.querySelector('[name="taskId"]')?.value)) return; document.querySelector('#typing-indicator')?.replaceChildren(document.createTextNode(`${payload.user?.displayName || 'Someone'} is typing…`)); });
+  state.socket.on('typing:stop', (payload) => { if (Number(payload.taskId) === Number(document.querySelector('[name="taskId"]')?.value)) document.querySelector('#typing-indicator')?.replaceChildren(); });
+}
+function joinProjectRoom(projectId) { if (!state.socket?.connected) return; if (state.currentRoom && state.currentRoom !== Number(projectId)) state.socket.emit('project:leave', { projectId: state.currentRoom }); state.currentRoom = Number(projectId); state.socket.emit('project:join', { projectId: Number(projectId) }); }
+function notificationCenterContent() { return `<section class="page-heading"><div><p class="eyebrow"><span class="eyebrow-dot"></span> Workspace signals</p><h1>Notifications</h1><p>Stay close to the updates that need your attention.</p></div><div class="page-actions">${button(`${icon('check', 15)} Mark all read`, 'read-all-notifications', 'btn-secondary')}</div></section><section class="panel notification-center"><div class="notification-center-head"><strong>${state.unreadNotifications} unread</strong><span class="presence-count">Real-time enabled</span></div>${state.notifications.length ? state.notifications.map((item) => notificationItem(item)).join('') : `<div class="notification-empty large">You’re all caught up. New assignments, mentions, and due dates will appear here.</div>`}</section>`; }
 
-        // Initialize theme
-        window.theme.updateThemeToggleUI ? window.theme.updateThemeToggleUI(document.documentElement.getAttribute('data-theme') || 'light') : null;
-
-        // Initialize auth session
-        await window.auth.init();
-
-        // Setup global event listeners
-        this.setupKeyboardShortcuts();
-        this.setupDropdowns();
-        this.setupAuthForms();
-
-        // Determine initial route
-        const path = window.location.pathname.replace(/^\//, '') || '';
-        if (window.auth.currentUser) {
-            this.navigate(path || 'dashboard');
-        } else {
-            if (path === 'login' || path === 'register' || path === 'auth') {
-                this.navigate('auth', { tab: path === 'register' ? 'register' : 'login' });
-            } else {
-                this.navigate('landing');
-            }
-        }
-
-        // Handle browser back/forward
-        window.addEventListener('popstate', (e) => {
-            if (e.state && e.state.view) {
-                this.renderView(e.state.view, e.state.params, false);
-            }
-        });
-    }
-
-    renderStaticIcons() {
-        // Replace elements with data-icon attribute
-        document.querySelectorAll('[data-icon]').forEach(el => {
-            const name = el.getAttribute('data-icon');
-            const size = parseInt(el.getAttribute('data-icon-size') || '18', 10);
-            el.innerHTML = window.icon(name, size);
-        });
-    }
-
-    navigate(view, params = {}, pushState = true) {
-        if (!window.auth.currentUser && view !== 'landing' && view !== 'auth') {
-            view = 'landing';
-        }
-
-        this.currentView = view;
-        this.viewParams = params;
-
-        if (pushState) {
-            const url = view === 'landing' ? '/' : `/${view}`;
-            window.history.pushState({ view, params }, '', url);
-        }
-
-        this.renderView(view, params);
-        this.updateNavHighlight(view);
-    }
-
-    renderView(view, params = {}) {
-        const container = document.getElementById('view-container');
-        if (!container) return;
-
-        // Close any open modals
-        this.closeAllModals();
-
-        if (view === 'landing') {
-            this.renderLandingView(container);
-        } else if (view === 'auth') {
-            this.renderAuthView(container, params.tab || 'login');
-        } else if (view === 'dashboard') {
-            this.renderDashboardPlaceholder(container);
-        } else if (view === 'projects') {
-            window.projects.renderProjectsView(container);
-        } else if (view === 'board') {
-            window.kanban.renderBoardView(container, params.projectId);
-        } else if (view === 'settings') {
-            container.innerHTML = `<div class="empty-state">
-                <div class="empty-state-svg">${window.icon('settings', 64)}</div>
-                <h2 class="empty-state-title">Settings</h2>
-                <p class="empty-state-desc">Personal profile and team preferences are being configured.</p>
-                <button class="btn btn-primary" onclick="window.app.navigate('dashboard')">Back to Dashboard</button>
-            </div>`;
-        } else {
-            container.innerHTML = `<div class="empty-state">
-                <div class="empty-state-svg">${window.icon('alert-circle', 64)}</div>
-                <h2 class="empty-state-title">Page Not Found</h2>
-                <p class="empty-state-desc">The requested page could not be located.</p>
-                <button class="btn btn-primary" onclick="window.app.navigate('dashboard')">Go to Dashboard</button>
-            </div>`;
-        }
-    }
-
-    updateNavHighlight(view) {
-        document.querySelectorAll('.sidebar-nav-item, .mobile-tab-btn').forEach(el => {
-            const target = el.getAttribute('data-view');
-            if (target === view) {
-                el.classList.add('active');
-            } else {
-                el.classList.remove('active');
-            }
-        });
-    }
-
-    renderLandingView(container) {
-        container.innerHTML = `
-            <div class="landing-container">
-                <div class="hero-badge">
-                    ${window.icon('sparkles', 16)} Taskora 2.0 • CodeAlpha Full Stack
-                </div>
-                <h1 class="hero-title">
-                    The modern workspace to <span class="gradient-text">Plan. Collaborate. Deliver.</span>
-                </h1>
-                <p class="hero-subtitle">
-                    Organize projects, prioritize tasks, collaborate in real-time, and ship faster with high-performance Kanban boards, team permissions, and real-time activity tracking.
-                </p>
-                <div class="hero-actions">
-                    <button class="btn btn-primary btn-lg" onclick="window.app.navigate('auth', { tab: 'register' })">
-                        Get Started Free ${window.icon('arrow-right', 18)}
-                    </button>
-                    <button class="btn btn-secondary btn-lg" onclick="window.app.quickDemo()">
-                        ${window.icon('sparkles', 18)} Explore Demo
-                    </button>
-                </div>
-                <div class="hero-demo-notice">
-                    ${window.icon('shield', 16)} No credit card required. Preloaded with realistic team data and 3 group projects.
-                </div>
-
-                <!-- Interactive Preview Showcase -->
-                <div class="landing-preview-card">
-                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid var(--border)">
-                        <div style="display:flex; align-items:center; gap:10px">
-                            <span style="width:12px; height:12px; border-radius:50%; background:#EF4444"></span>
-                            <span style="width:12px; height:12px; border-radius:50%; background:#F59E0B"></span>
-                            <span style="width:12px; height:12px; border-radius:50%; background:#22C55E"></span>
-                            <span style="font-weight:700; font-size:0.875rem; margin-left:8px">Website Redesign • Sprint Board</span>
-                        </div>
-                        <div style="display:flex; align-items:center; gap:8px">
-                            <span class="badge badge-urgent">Urgent</span>
-                            <span class="badge badge-medium">4 Tasks in progress</span>
-                        </div>
-                    </div>
-                    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:16px; text-align:left">
-                        <div style="background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius-lg); padding:14px">
-                            <div style="font-weight:700; font-size:0.8125rem; margin-bottom:10px; display:flex; justify-content:space-between">
-                                <span>TO DO</span> <span class="badge" style="background:var(--surface)">3</span>
-                            </div>
-                            <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md); padding:12px; margin-bottom:8px; box-shadow:var(--shadow-sm)">
-                                <span class="badge badge-high" style="margin-bottom:6px">High</span>
-                                <div style="font-weight:600; font-size:0.875rem; margin-bottom:4px">Design brand icon set</div>
-                                <div style="font-size:0.75rem; color:var(--text-muted)">Checklist: 3/4 done</div>
-                            </div>
-                        </div>
-                        <div style="background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius-lg); padding:14px">
-                            <div style="font-weight:700; font-size:0.8125rem; margin-bottom:10px; display:flex; justify-content:space-between">
-                                <span>IN PROGRESS</span> <span class="badge" style="background:var(--surface)">2</span>
-                            </div>
-                            <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md); padding:12px; margin-bottom:8px; box-shadow:var(--shadow-sm)">
-                                <span class="badge badge-urgent" style="margin-bottom:6px">Urgent</span>
-                                <div style="font-weight:600; font-size:0.875rem; margin-bottom:4px">Setup Socket.io real-time board</div>
-                                <div style="font-size:0.75rem; color:var(--text-muted)">Assigned to Alex</div>
-                            </div>
-                        </div>
-                        <div style="background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius-lg); padding:14px">
-                            <div style="font-weight:700; font-size:0.8125rem; margin-bottom:10px; display:flex; justify-content:space-between">
-                                <span>DONE</span> <span class="badge" style="background:var(--surface)">5</span>
-                            </div>
-                            <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md); padding:12px; margin-bottom:8px; box-shadow:var(--shadow-sm)">
-                                <span class="badge badge-low" style="margin-bottom:6px">Completed</span>
-                                <div style="font-weight:600; font-size:0.875rem; margin-bottom:4px">SQLite schema with WAL mode</div>
-                                <div style="font-size:0.75rem; color:var(--text-muted)">Reviewed by Team</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Feature Highlights -->
-                <div class="features-grid">
-                    <div class="feature-card">
-                        <div class="feature-icon-wrapper">${window.icon('kanban', 24)}</div>
-                        <h3 class="feature-title">Fluid Kanban Boards</h3>
-                        <p class="feature-desc">Drag and drop cards seamlessly between customizable columns with instant position persistence and responsive touch support.</p>
-                    </div>
-                    <div class="feature-card">
-                        <div class="feature-icon-wrapper">${window.icon('activity', 24)}</div>
-                        <h3 class="feature-title">Socket.io Real-Time Sync</h3>
-                        <p class="feature-desc">See task changes, moves, and comments the millisecond they happen. Live online avatars and typing indicators keep everyone in sync.</p>
-                    </div>
-                    <div class="feature-card">
-                        <div class="feature-icon-wrapper">${window.icon('users', 24)}</div>
-                        <h3 class="feature-title">Role-Based Team Control</h3>
-                        <p class="feature-desc">Manage project members with strict Owner, Admin, Member, and Viewer permissions to safeguard critical workflows.</p>
-                    </div>
-                    <div class="feature-card">
-                        <div class="feature-icon-wrapper">${window.icon('check-square', 24)}</div>
-                        <h3 class="feature-title">Subtasks & Checklists</h3>
-                        <p class="feature-desc">Break large initiatives into manageable checklist milestones with interactive progress bars and assignee tracking.</p>
-                    </div>
-                    <div class="feature-card">
-                        <div class="feature-icon-wrapper">${window.icon('bell', 24)}</div>
-                        <h3 class="feature-title">Smart Notifications</h3>
-                        <p class="feature-desc">Stay informed when assigned to tasks, mentioned in discussions, or when upcoming deadlines approach.</p>
-                    </div>
-                    <div class="feature-card">
-                        <div class="feature-icon-wrapper">${window.icon('moon', 24)}</div>
-                        <h3 class="feature-title">Curated Dual Themes</h3>
-                        <p class="feature-desc">Pixel-perfect Light and Dark themes engineered with WCAG AA contrast compliance and smooth micro-animations.</p>
-                    </div>
-                </div>
-            </div>
-        `;
-    }
-
-    renderAuthView(container, activeTab = 'login') {
-        container.innerHTML = `
-            <div class="auth-page-container">
-                <!-- Left Brand Panel -->
-                <div class="auth-brand-panel">
-                    <div>
-                        <div style="display:flex; align-items:center; gap:10px; margin-bottom:40px">
-                            <img src="/logo.svg" alt="Taskora Logo" style="height:38px">
-                        </div>
-                        <h2 class="auth-panel-tagline">
-                            Plan with clarity.<br>
-                            Collaborate in sync.<br>
-                            <span class="highlight">Deliver on time.</span>
-                        </h2>
-                        <p class="auth-panel-description">
-                            Experience next-generation team task management with real-time updates, interactive boards, and granular permissions.
-                        </p>
-                    </div>
-                    <ul class="auth-feature-list">
-                        <li class="auth-feature-item">${window.icon('check-circle', 20)} Fast, responsive Kanban drag and drop</li>
-                        <li class="auth-feature-item">${window.icon('check-circle', 20)} Instant live synchronization via Socket.io</li>
-                        <li class="auth-feature-item">${window.icon('check-circle', 20)} Role-based security (Owner, Admin, Member, Viewer)</li>
-                        <li class="auth-feature-item">${window.icon('check-circle', 20)} Dark & light themes with WCAG AA compliance</li>
-                    </ul>
-                    <div style="font-size:0.8125rem; color:#8489AB">
-                        Taskora • CodeAlpha Full Stack Internship Task 3
-                    </div>
-                </div>
-
-                <!-- Right Form Panel -->
-                <div class="auth-form-panel">
-                    <div class="auth-card">
-                        <div class="auth-tabs">
-                            <button class="auth-tab-btn ${activeTab === 'login' ? 'active' : ''}" id="tab-login-btn" onclick="window.app.switchAuthTab('login')">
-                                Sign In
-                            </button>
-                            <button class="auth-tab-btn ${activeTab === 'register' ? 'active' : ''}" id="tab-register-btn" onclick="window.app.switchAuthTab('register')">
-                                Create Account
-                            </button>
-                        </div>
-
-                        <!-- Login Form -->
-                        <form id="login-form" style="display: ${activeTab === 'login' ? 'block' : 'none'}">
-                            <div class="form-group" id="login-identifier-group">
-                                <label class="form-label" for="login-identifier">Username or Email</label>
-                                <div class="input-with-icon">
-                                    <span class="input-icon-left">${window.icon('user', 18)}</span>
-                                    <input type="text" id="login-identifier" class="form-control" placeholder="Enter username or email" required autocomplete="username">
-                                </div>
-                                <span class="form-error-msg" id="login-identifier-error"></span>
-                            </div>
-
-                            <div class="form-group" id="login-password-group">
-                                <label class="form-label" for="login-password">Password</label>
-                                <div class="input-with-icon">
-                                    <span class="input-icon-left">${window.icon('lock', 18)}</span>
-                                    <input type="password" id="login-password" class="form-control" placeholder="••••••••" required autocomplete="current-password">
-                                    <span class="input-password-toggle" onclick="window.app.togglePasswordVisibility('login-password')">
-                                        ${window.icon('eye', 18)}
-                                    </span>
-                                </div>
-                                <span class="form-error-msg" id="login-password-error"></span>
-                            </div>
-
-                            <button type="submit" class="btn btn-primary" style="width:100%; margin-top:8px">
-                                Sign In ${window.icon('arrow-right', 18)}
-                            </button>
-                        </form>
-
-                        <!-- Register Form -->
-                        <form id="register-form" style="display: ${activeTab === 'register' ? 'block' : 'none'}">
-                            <div class="form-group" id="reg-name-group">
-                                <label class="form-label" for="reg-name">Full Name</label>
-                                <div class="input-with-icon">
-                                    <span class="input-icon-left">${window.icon('user', 18)}</span>
-                                    <input type="text" id="reg-name" class="form-control" placeholder="e.g. Alex Morgan" required>
-                                </div>
-                            </div>
-
-                            <div class="form-group" id="reg-username-group">
-                                <label class="form-label" for="reg-username">Username</label>
-                                <div class="input-with-icon">
-                                    <span class="input-icon-left">@</span>
-                                    <input type="text" id="reg-username" class="form-control" placeholder="alex_morgan" required autocomplete="username">
-                                </div>
-                                <span class="form-error-msg" id="reg-username-error"></span>
-                            </div>
-
-                            <div class="form-group" id="reg-email-group">
-                                <label class="form-label" for="reg-email">Email Address</label>
-                                <div class="input-with-icon">
-                                    <span class="input-icon-left">${window.icon('mail', 18)}</span>
-                                    <input type="email" id="reg-email" class="form-control" placeholder="alex@company.com" required autocomplete="email">
-                                </div>
-                                <span class="form-error-msg" id="reg-email-error"></span>
-                            </div>
-
-                            <div class="form-group" id="reg-password-group">
-                                <label class="form-label" for="reg-password">Password (min 8 characters)</label>
-                                <div class="input-with-icon">
-                                    <span class="input-icon-left">${window.icon('lock', 18)}</span>
-                                    <input type="password" id="reg-password" class="form-control" placeholder="••••••••" required minlength="8" autocomplete="new-password">
-                                    <span class="input-password-toggle" onclick="window.app.togglePasswordVisibility('reg-password')">
-                                        ${window.icon('eye', 18)}
-                                    </span>
-                                </div>
-                                <span class="form-error-msg" id="reg-password-error"></span>
-                            </div>
-
-                            <button type="submit" class="btn btn-primary" style="width:100%; margin-top:8px">
-                                Create Account ${window.icon('arrow-right', 18)}
-                            </button>
-                        </form>
-
-                        <!-- Demo Login Box -->
-                        <div class="demo-accounts-box">
-                            <p>Try a preloaded demo account:</p>
-                            <div class="demo-buttons-row">
-                                <button type="button" class="btn btn-secondary btn-sm" onclick="window.auth.demoLogin('alex_owner')">
-                                    ${window.icon('shield', 14)} Alex (Owner)
-                                </button>
-                                <button type="button" class="btn btn-secondary btn-sm" onclick="window.auth.demoLogin('sarah_dev')">
-                                    ${window.icon('user', 14)} Sarah (Member)
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        this.setupAuthForms();
-    }
-
-    switchAuthTab(tab) {
-        const loginForm = document.getElementById('login-form');
-        const registerForm = document.getElementById('register-form');
-        const tabLoginBtn = document.getElementById('tab-login-btn');
-        const tabRegBtn = document.getElementById('tab-register-btn');
-
-        if (tab === 'login') {
-            if (loginForm) loginForm.style.display = 'block';
-            if (registerForm) registerForm.style.display = 'none';
-            if (tabLoginBtn) tabLoginBtn.classList.add('active');
-            if (tabRegBtn) tabRegBtn.classList.remove('active');
-        } else {
-            if (loginForm) loginForm.style.display = 'none';
-            if (registerForm) registerForm.style.display = 'block';
-            if (tabLoginBtn) tabLoginBtn.classList.remove('active');
-            if (tabRegBtn) tabRegBtn.classList.add('active');
-        }
-    }
-
-    togglePasswordVisibility(inputId) {
-        const input = document.getElementById(inputId);
-        if (!input) return;
-        const isPassword = input.type === 'password';
-        input.type = isPassword ? 'text' : 'password';
-    }
-
-    setupAuthForms() {
-        const loginForm = document.getElementById('login-form');
-        if (loginForm) {
-            loginForm.onsubmit = async (e) => {
-                e.preventDefault();
-                const idEl = document.getElementById('login-identifier');
-                const passEl = document.getElementById('login-password');
-                if (!idEl || !passEl) return;
-                try {
-                    await window.auth.login(idEl.value.trim(), passEl.value);
-                } catch (e) {
-                    // Handled in auth manager toast
-                }
-            };
-        }
-
-        const regForm = document.getElementById('register-form');
-        if (regForm) {
-            regForm.onsubmit = async (e) => {
-                e.preventDefault();
-                const nameEl = document.getElementById('reg-name');
-                const usernameEl = document.getElementById('reg-username');
-                const emailEl = document.getElementById('reg-email');
-                const passEl = document.getElementById('reg-password');
-
-                if (!usernameEl || !emailEl || !passEl) return;
-
-                if (passEl.value.length < 8) {
-                    this.showToast('error', 'Weak Password', 'Password must be at least 8 characters long.');
-                    return;
-                }
-
-                try {
-                    await window.auth.register(
-                        usernameEl.value.trim(),
-                        emailEl.value.trim(),
-                        passEl.value,
-                        nameEl ? nameEl.value.trim() : ''
-                    );
-                } catch (e) {
-                    // Handled in auth manager toast
-                }
-            };
-        }
-    }
-
-    renderDashboardPlaceholder(container) {
-        const user = window.auth.currentUser || { display_name: 'Explorer' };
-        container.innerHTML = `
-            <div style="margin-bottom:28px">
-                <h1 style="font-size:1.875rem; margin-bottom:6px">Welcome, ${user.display_name}! 👋</h1>
-                <p style="color:var(--text-muted)">Phase 1 complete: Database, JWT Auth, Design System & Layout are active.</p>
-            </div>
-
-            <!-- Stats Overview Cards -->
-            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:20px; margin-bottom:32px">
-                <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; box-shadow:var(--shadow-sm)">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
-                        <span style="font-size:0.8125rem; font-weight:600; color:var(--text-muted)">Active Projects</span>
-                        <div style="padding:6px; border-radius:var(--radius-sm); background:var(--brand-primary-light); color:var(--brand-primary)">${window.icon('folder', 18)}</div>
-                    </div>
-                    <div style="font-size:1.875rem; font-weight:800; font-family:var(--font-heading)" id="dash-projects-count">3</div>
-                    <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px">Across 8 team members</div>
-                </div>
-
-                <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; box-shadow:var(--shadow-sm)">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
-                        <span style="font-size:0.8125rem; font-weight:600; color:var(--text-muted)">Tasks Due This Week</span>
-                        <div style="padding:6px; border-radius:var(--radius-sm); background:var(--priority-medium-bg); color:var(--priority-medium-text)">${window.icon('clock', 18)}</div>
-                    </div>
-                    <div style="font-size:1.875rem; font-weight:800; font-family:var(--font-heading)">5 tasks</div>
-                    <div style="font-size:0.75rem; color:var(--priority-medium-text); margin-top:4px">2 due today</div>
-                </div>
-
-                <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; box-shadow:var(--shadow-sm)">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
-                        <span style="font-size:0.8125rem; font-weight:600; color:var(--text-muted)">Completed Tasks</span>
-                        <div style="padding:6px; border-radius:var(--radius-sm); background:var(--priority-low-bg); color:var(--priority-low-text)">${window.icon('check-circle', 18)}</div>
-                    </div>
-                    <div style="font-size:1.875rem; font-weight:800; font-family:var(--font-heading)">18 tasks</div>
-                    <div style="font-size:0.75rem; color:var(--priority-low-text); margin-top:4px">76% sprint progress</div>
-                </div>
-
-                <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; box-shadow:var(--shadow-sm)">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
-                        <span style="font-size:0.8125rem; font-weight:600; color:var(--text-muted)">Real-time Status</span>
-                        <div style="padding:6px; border-radius:var(--radius-sm); background:rgba(16,185,129,0.15); color:#10B981">${window.icon('activity', 18)}</div>
-                    </div>
-                    <div style="font-size:1.25rem; font-weight:700; color:#10B981; display:flex; align-items:center; gap:8px">
-                        <span style="width:10px; height:10px; border-radius:50%; background:#10B981; display:inline-block"></span> Connected
-                    </div>
-                    <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px">Socket.io server listening</div>
-                </div>
-            </div>
-
-            <!-- Ready for Phase 2 Banner -->
-            <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-xl); padding:28px; box-shadow:var(--shadow-md)">
-                <div style="display:flex; align-items:center; gap:16px; margin-bottom:16px">
-                    <div style="width:44px; height:44px; border-radius:var(--radius-md); background:var(--brand-primary-light); color:var(--brand-primary); display:flex; align-items:center; justify-content:center">
-                        ${window.icon('sparkles', 22)}
-                    </div>
-                    <div>
-                        <h2 style="font-size:1.25rem; font-weight:700">Phase 1 Foundations Ready</h2>
-                        <p style="color:var(--text-muted); font-size:0.875rem">Express backend, SQLite WAL schema, JWT authentication, and responsive dual-theme design system are operational.</p>
-                    </div>
-                </div>
-                <div style="display:flex; gap:12px; flex-wrap:wrap">
-                    <button class="btn btn-primary btn-sm" onclick="window.app.showToast('info', 'Phase 2 Next', 'Ready to implement Project CRUD, Members, and Roles.')">
-                        ${window.icon('folder', 16)} Explore Projects
-                    </button>
-                    <button class="btn btn-secondary btn-sm" onclick="window.theme.toggleTheme()">
-                        ${window.icon('moon', 16)} Toggle Theme
-                    </button>
-                </div>
-            </div>
-        `;
-    }
-
-    quickDemo() {
-        this.navigate('auth', { tab: 'login' });
-        setTimeout(() => {
-            window.auth.demoLogin('alex_owner');
-        }, 100);
-    }
-
-    setupKeyboardShortcuts() {
-        window.addEventListener('keydown', (e) => {
-            // Esc: close active modal or dropdown
-            if (e.key === 'Escape') {
-                this.closeAllModals();
-                this.closeAllDropdowns();
-            }
-
-            // Avoid shortcuts if user is typing in an input
-            const activeTag = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
-            if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') {
-                return;
-            }
-
-            // '/': focus search input
-            if (e.key === '/') {
-                e.preventDefault();
-                const searchInput = document.getElementById('navbar-search-input');
-                if (searchInput && searchInput.offsetParent !== null) {
-                    searchInput.focus();
-                }
-            }
-
-            // 'N': new task shortcut
-            if (e.key === 'n' || e.key === 'N') {
-                if (window.auth.currentUser) {
-                    if (this.currentView === 'board' && window.kanban) {
-                        e.preventDefault();
-                        window.kanban.openAddTaskModal();
-                    } else if (window.projects && window.projects.projects.length > 0) {
-                        e.preventDefault();
-                        const pId = window.projects.projects[0].id;
-                        window.kanban.projectId = pId;
-                        window.kanban.project = window.projects.projects[0];
-                        window.kanban.columns = window.projects.projects[0].columns || [];
-                        window.kanban.openAddTaskModal();
-                    } else {
-                        this.showToast('info', 'No Projects', 'Create a project first before adding tasks.');
-                    }
-                }
-            }
-        });
-    }
-
-    setupDropdowns() {
-        const userMenuBtn = document.getElementById('user-menu-btn');
-        const userDropdown = document.getElementById('user-dropdown-menu');
-
-        if (userMenuBtn && userDropdown) {
-            userMenuBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                userDropdown.classList.toggle('open');
-            });
-        }
-
-        // Close dropdown when clicking outside
-        window.addEventListener('click', (e) => {
-            if (userDropdown && !userDropdown.contains(e.target) && e.target !== userMenuBtn) {
-                userDropdown.classList.remove('open');
-            }
-        });
-    }
-
-    closeAllDropdowns() {
-        document.querySelectorAll('.dropdown-menu').forEach(el => el.classList.remove('open'));
-    }
-
-    closeAllModals() {
-        document.querySelectorAll('.modal-overlay').forEach(el => el.classList.remove('open'));
-        this.activeModal = null;
-    }
-
-    showToast(type = 'info', title = '', message = '', duration = 4000) {
-        const container = document.getElementById('toast-container');
-        if (!container) return;
-
-        const toast = document.createElement('div');
-        toast.className = `toast toast-${type}`;
-
-        const iconMap = {
-            success: 'check-circle',
-            error: 'alert-circle',
-            warning: 'alert-circle',
-            info: 'info'
-        };
-
-        toast.innerHTML = `
-            <div class="toast-icon">${window.icon(iconMap[type] || 'info', 20)}</div>
-            <div class="toast-content">
-                ${title ? `<div class="toast-title">${title}</div>` : ''}
-                <div>${message}</div>
-            </div>
-            <div class="toast-close" onclick="this.parentElement.remove()">${window.icon('x', 16)}</div>
-        `;
-
-        container.appendChild(toast);
-
-        setTimeout(() => {
-            if (toast.parentElement) {
-                toast.style.opacity = '0';
-                toast.style.transform = 'translateY(8px)';
-                toast.style.transition = 'all 0.2s ease-out';
-                setTimeout(() => toast.remove(), 200);
-            }
-        }, duration);
-    }
+function renderLanding() {
+  return `<div class="landing-page"><nav class="landing-nav" aria-label="Main navigation"><div class="landing-nav-inner">${logoMarkup()}<div class="landing-nav-links"><a href="#features">Features</a><a href="#how-it-works">How it works</a><a href="#realtime">Real-time</a><a href="#faq">FAQ</a></div><div class="landing-nav-actions">${button(`${icon('moon', 15)} Theme`, 'theme', 'btn-ghost')}<a class="btn btn-ghost" href="/login" data-nav>Sign in</a><a class="btn btn-primary" href="/register" data-nav>Start free ${icon('arrow', 15)}</a><button class="landing-menu-button" type="button" data-action="landing-menu" aria-label="Open navigation menu" aria-expanded="false">${icon('menu', 18)}</button></div></div><div class="landing-mobile-menu" id="landing-mobile-menu"><a href="#features">Features</a><a href="#how-it-works">How it works</a><a href="#realtime">Real-time</a><a href="#faq">FAQ</a><div class="mobile-menu-actions">${button(`${icon('moon', 15)} Theme`, 'theme', 'btn-ghost')}<a class="btn btn-ghost" href="/login" data-nav>Sign in</a><a class="btn btn-primary" href="/register" data-nav>Start free</a></div></div></nav><main><section class="landing-hero"><div class="hero-copy"><p class="eyebrow"><span class="eyebrow-dot"></span> A clearer way to move work</p><h1>Make every next step <span>visible.</span></h1><p>Taskora brings projects, conversations, and momentum into one focused workspace — so your team can spend less time coordinating and more time delivering.</p><div class="hero-actions"><a class="btn btn-primary" href="/register" data-nav>Create your workspace ${icon('arrow', 16)}</a><a class="btn btn-secondary" href="/login" data-nav>Sign in</a></div><p class="hero-note">${icon('shield', 15)} Built for calm, accountable collaboration.</p></div><div class="board-preview" aria-label="Preview of a Taskora board"><div class="preview-window"><div class="preview-bar"><div class="preview-dots"><i></i><i></i><i></i></div><div class="preview-search"></div>${icon('more', 16)}</div><div class="preview-body"><div class="preview-side"><div class="preview-side-line active"></div><div class="preview-side-line"></div><div class="preview-side-line"></div><div class="preview-side-line"></div><div class="preview-side-line"></div></div><div class="preview-main"><div class="preview-title"></div><div class="preview-columns"><div class="preview-column"><div class="preview-column-label"></div><div class="preview-card"><div class="preview-card-line"></div><div class="preview-card-line short"></div><span class="preview-pill"></span></div><div class="preview-card"><div class="preview-card-line"></div><div class="preview-card-line short"></div><span class="preview-pill orange"></span></div></div><div class="preview-column"><div class="preview-column-label"></div><div class="preview-card"><div class="preview-card-line"></div><div class="preview-card-line short"></div><span class="preview-pill green"></span></div><div class="preview-card"><div class="preview-card-line"></div><div class="preview-card-line short"></div><span class="preview-pill"></span></div></div><div class="preview-column"><div class="preview-column-label"></div><div class="preview-card"><div class="preview-card-line"></div><div class="preview-card-line short"></div><span class="preview-pill green"></span></div></div></div></div></div></div></div></section><span id="how-it-works" class="landing-anchor"></span><span id="realtime" class="landing-anchor"></span><span id="faq" class="landing-anchor"></span><section class="landing-features" id="features"><div class="section-heading"><h2>Structure that keeps the important work in view.</h2><p>Start with a shared source of truth, then give every update a place to land.</p></div><div class="feature-grid"><article class="feature-card"><div class="feature-icon">${icon('layout', 19)}</div><h3>Projects with a pulse</h3><p>See work move from idea to done with boards, owners, priorities, and due dates that stay connected.</p></article><article class="feature-card"><div class="feature-icon">${icon('users', 19)}</div><h3>Collaboration, in context</h3><p>Keep comments, decisions, and activity close to the task — not scattered across another dozen tabs.</p></article><article class="feature-card"><div class="feature-icon">${icon('spark', 19)}</div><h3>Momentum you can trust</h3><p>Make the next action obvious with a focused dashboard, thoughtful notifications, and calm defaults.</p></article></div></section></main><footer class="landing-footer"><div class="landing-footer-brand">${logoMarkup()}<span>© ${new Date().getFullYear()} Taskora</span></div><span>Plan. Collaborate. Deliver.</span></footer></div>`;
+}
+function renderAuth(mode = 'login') {
+  const isLogin = mode === 'login';
+  return `<div class="auth-page"><section class="auth-brand-panel"><div class="auth-brand-copy"><p class="eyebrow"><span class="eyebrow-dot"></span> Welcome to Taskora</p><h1>Plan.<br />Collaborate.<br />Deliver.</h1><p>Give your team one clear place to turn ideas into visible progress.</p></div><div class="auth-trail"><span>${icon('checkCircle', 15)} Clear ownership</span><span>${icon('checkCircle', 15)} Calm momentum</span></div></section><section class="auth-form-panel"><div class="auth-form-wrap"><div class="auth-logo">${logoMarkup()}</div><p class="eyebrow"><span class="eyebrow-dot"></span> ${isLogin ? 'Good to see you' : 'Your workspace starts here'}</p><h2>${isLogin ? 'Sign in to Taskora' : 'Create your account'}</h2><p>${isLogin ? 'Pick up where your team left off.' : 'Set up a focused place for work to move forward.'}</p><form class="auth-form" id="${isLogin ? 'login-form' : 'register-form'}" novalidate>${!isLogin ? `<div class="field"><label for="displayName">Display name</label><div class="field-input">${icon('user', 17)}<input id="displayName" name="displayName" autocomplete="name" placeholder="e.g. Osman Ebrahim" required /></div></div><div class="field"><label for="username">Username</label><div class="field-input">${icon('at', 17)}<input id="username" name="username" autocomplete="username" placeholder="osman" required /></div></div>` : ''}<div class="field"><label for="${isLogin ? 'identifier' : 'email'}">${isLogin ? 'Username or email' : 'Email address'}</label><div class="field-input">${icon('mail', 17)}<input id="${isLogin ? 'identifier' : 'email'}" name="${isLogin ? 'identifier' : 'email'}" type="${isLogin ? 'text' : 'email'}" autocomplete="${isLogin ? 'username' : 'email'}" placeholder="you@company.com" required /></div></div>${!isLogin ? `<div class="field"><label for="registerPassword">Password</label><div class="field-input">${icon('lock', 17)}<input id="registerPassword" name="password" type="password" autocomplete="new-password" placeholder="At least 8 characters" minlength="8" required /><button class="password-toggle" type="button" data-action="toggle-password" data-target="registerPassword" aria-label="Show password">${icon('eye', 17)}</button></div></div>` : `<div class="field"><label for="loginPassword">Password</label><div class="field-input">${icon('lock', 17)}<input id="loginPassword" name="password" type="password" autocomplete="current-password" placeholder="Your password" required /><button class="password-toggle" type="button" data-action="toggle-password" data-target="loginPassword" aria-label="Show password">${icon('eye', 17)}</button></div></div>`}${isLogin ? `<div class="form-meta"><label class="form-check"><input type="checkbox" /> Remember me</label><span>Secure sign in</span></div>` : ''}<div class="form-error" id="form-error" role="alert"></div><button class="btn btn-primary btn-full" type="submit">${isLogin ? 'Sign in' : 'Create account'} ${icon('arrow', 16)}</button></form><button class="demo-button" type="button" data-action="demo">${icon('spark', 15)} Try a demo account <span class="soft">· run seed first</span></button><p class="auth-switch">${isLogin ? 'New to Taskora?' : 'Already have an account?'} <a class="text-link" href="${isLogin ? '/register' : '/login'}" data-nav>${isLogin ? 'Create an account' : 'Log in'}</a></p><p class="auth-terms">By continuing, you agree to keep your workspace respectful, secure, and useful to the people you work with.</p></div></section></div>`;
 }
 
-window.app = new AppManager();
-document.addEventListener('DOMContentLoaded', () => {
-    window.app.init();
-});
+function shellSidebar(active) {
+  const navItem = (href, label, iconName, key, count = '') => `<a class="nav-item ${active === key ? 'active' : ''}" href="${href}" data-nav>${icon(iconName, 17)}<span>${label}</span>${count ? `<span class="nav-count">${count}</span>` : ''}</a>`;
+  const projects = state.projects.length ? state.projects.slice(0, 6).map((project) => `<a class="nav-item project-link ${active === `project-${project.id}` ? 'active' : ''}" href="/projects/${project.id}" data-nav><span class="project-dot" style="background:${escapeHtml(project.color)}"></span><span>${escapeHtml(project.name)}</span><span class="nav-count">${Number(project.taskCount || 0)}</span></a>`).join('') : `<div class="sidebar-empty">No projects yet.</div>`;
+  const unread = state.unreadNotifications > 99 ? '99+' : state.unreadNotifications;
+  return `<aside class="sidebar" id="app-sidebar"><div class="sidebar-heading">Workspace</div><nav class="sidebar-nav">${navItem('/app', 'Dashboard', 'grid', 'dashboard')}${navItem('/tasks', 'My Tasks', 'checkCircle', 'tasks')}${navItem('/notifications', 'Notifications', 'bell', 'notifications', state.unreadNotifications ? unread : '')}</nav><div class="project-nav"><div class="sidebar-heading sidebar-heading-row"><span>Projects</span><button type="button" class="mini-add" data-action="new-project" aria-label="New project">${icon('plus', 14)}</button></div>${projects}<button type="button" class="nav-item new-project-link" data-action="new-project">${icon('plus', 16)}<span>Create project</span></button></div><div class="sidebar-footer"><div class="sidebar-settings">${navItem('/settings', 'Settings', 'settings', 'settings')}</div><div class="help-card"><strong>Build with intention.</strong><span>Taskora gives every next step a place to land.</span></div><span class="soft small">CodeAlpha · Task 3</span></div></aside>`;
+}
+function projectSwitcherMarkup() {
+  const current = state.project?.name || 'All projects';
+  const options = state.projects.length ? state.projects.map((project) => `<a href="/projects/${project.id}" data-nav class="project-switcher-item"><span class="project-dot" style="background:${escapeHtml(project.color)}"></span>${escapeHtml(project.name)}</a>`).join('') : '<span class="project-switcher-empty">No projects yet</span>';
+  return `<div class="project-switcher-wrap"><button type="button" class="project-switcher" data-action="project-switcher" aria-label="Switch project" aria-expanded="false">${icon('layers', 16)}<span>${escapeHtml(current)}</span>${icon('chevron', 14)}</button><div class="project-switcher-menu" id="project-switcher-menu"><a href="/app" data-nav class="project-switcher-item"><span class="project-dot" style="background:var(--brand-1)"></span>All projects</a>${options}</div></div>`;
+}
+function globalSearchResults() {
+  const query = state.searchQuery.trim().toLowerCase();
+  if (!query) return '<div class="global-search-hint">Search projects and tasks as you type.</div>';
+  const projects = state.projects.filter((project) => `${project.name} ${project.description || ''}`.toLowerCase().includes(query)).slice(0, 4);
+  const tasks = (state.tasks || []).filter((task) => `${task.title} ${task.description || ''}`.toLowerCase().includes(query)).slice(0, 5);
+  if (!projects.length && !tasks.length) return '<div class="global-search-hint">No matching projects or tasks.</div>';
+  return `${projects.map((project) => `<a href="/projects/${project.id}" data-nav class="global-search-result"><span class="search-result-icon" style="color:${escapeHtml(project.color)}">${icon('layers', 15)}</span><span><strong>${escapeHtml(project.name)}</strong><small>Project</small></span></a>`).join('')}${tasks.map((task) => `<a href="/projects/${task.projectId}" data-nav class="global-search-result"><span class="search-result-icon">${icon('checkCircle', 15)}</span><span><strong>${escapeHtml(task.title)}</strong><small>${escapeHtml(task.projectName || 'Task')}</small></span></a>`).join('')}`;
+}
+function accountMenuMarkup() { return `<div class="account-menu" id="account-menu"><a href="/settings" data-nav>${icon('user', 15)} Profile</a><a href="/settings" data-nav>${icon('settings', 15)} Settings</a><button type="button" data-action="logout">${icon('logout', 15)} Sign out</button></div>`; }
+function topbar() { const user = state.user; return `<header class="topbar"><div class="topbar-left"><button type="button" class="sidebar-toggle" data-action="sidebar-toggle" aria-label="Open sidebar" aria-expanded="false">${icon('menu', 18)}</button><a class="brand" href="/app" data-nav aria-label="Taskora dashboard"><img class="brand-logo logo-light" src="/assets/logo.svg" alt="Taskora" /><img class="brand-logo logo-dark" src="/assets/logo-dark.svg" alt="Taskora" /></a>${projectSwitcherMarkup()}</div><div class="search-box-wrap"><label class="search-box"><span class="sr-only">Search tasks</span>${icon('search', 17)}<input data-global-search value="${escapeHtml(state.searchQuery)}" placeholder="Search tasks, projects, people..." autocomplete="off" /><kbd class="search-shortcut">/</kbd></label><div class="global-search-results" id="global-search-results">${globalSearchResults()}</div></div><div class="topbar-actions"><button class="btn btn-primary topbar-new-task" type="button" data-action="global-new-task">${icon('plus', 15)}<span>New task</span></button><button class="icon-button notification-trigger" type="button" data-action="notification-toggle" aria-label="Notifications">${icon('bell', 17)}<span class="notification-badge" ${state.unreadNotifications ? '' : 'hidden'}>${state.unreadNotifications > 99 ? '99+' : state.unreadNotifications}</span></button><button class="icon-button" type="button" data-action="theme" aria-label="Toggle theme">${icon(state.theme === 'dark' ? 'sun' : 'moon', 17)}</button><div class="account-menu-wrap"><button class="avatar-menu" type="button" data-action="user-menu" aria-label="Open account menu" aria-expanded="false"><span class="avatar" style="background:${escapeHtml(user?.avatarColor || '#6366F1')}">${escapeHtml(initials(user))}</span><span class="avatar-name"><strong>${escapeHtml(user?.displayName || user?.username || 'You')}</strong></span>${icon('chevron', 14)}</button>${accountMenuMarkup()}</div></div>${notificationPopover()}</header>`; }
+function mobileTabs(active) { return `<nav class="mobile-tabs" aria-label="Mobile navigation"><button class="mobile-tab ${active === 'dashboard' ? 'active' : ''}" data-nav="/app" type="button">${icon('grid', 18)}<span>Home</span></button><button class="mobile-tab ${active === 'tasks' ? 'active' : ''}" data-nav="/tasks" type="button">${icon('checkCircle', 18)}<span>Tasks</span></button><button class="mobile-tab ${active === 'notifications' ? 'active' : ''}" data-nav="/notifications" type="button">${icon('bell', 18)}<span>Alerts</span></button><button class="mobile-tab ${active === 'settings' ? 'active' : ''}" data-nav="/settings" type="button">${icon('settings', 18)}<span>Settings</span></button></nav>`; }
+function appShell(content, active = 'dashboard') { return `<div class="app-shell">${topbar()}<button type="button" class="sidebar-scrim" data-action="sidebar-toggle" aria-label="Close sidebar"></button><div class="shell-body">${shellSidebar(active)}<main class="main-content" id="main-content"><div class="page-wrap">${content}</div></main></div>${mobileTabs(active)}<div class="toast-stack" id="toast-stack" aria-live="polite"></div><div id="modal-root"></div><div id="drawer-root"></div></div>`; }
+
+function projectCard(project) { const role = project.role || 'Member'; return `<article class="project-card"><a class="project-card-main" href="/projects/${project.id}" data-nav><div class="project-card-top"><span class="project-icon" style="color:${escapeHtml(project.color)};background:${escapeHtml(project.color)}18">${icon(project.icon || 'layers', 19)}</span><span class="role-pill ${roleTone(role)}">${escapeHtml(role)}</span></div><h3>${escapeHtml(project.name)}</h3><p>${escapeHtml(project.description || 'No description yet.')}</p><div class="project-card-meta"><span>${icon('users', 14)} ${plural(project.memberCount, 'member')}</span><span>${icon('checkCircle', 14)} ${plural(project.taskCount, 'task')}</span></div><div class="progress-track"><span style="width:${project.progress || 0}%;background:${escapeHtml(project.color)}"></span></div><div class="project-card-foot"><span>${project.progress || 0}% complete</span><span>${icon('arrow', 14)}</span></div></a><button type="button" class="project-card-menu" data-action="edit-project" data-project-id="${project.id}" aria-label="Edit ${escapeHtml(project.name)}">${icon('more', 17)}</button></article>`; }
+function dashboardTaskRows(title, tasks, emptyText) { return `<article class="panel dashboard-task-panel"><div class="panel-heading"><h2>${title}</h2><span class="soft small">${tasks.length}</span></div>${tasks.length ? `<div class="dashboard-task-list">${tasks.slice(0, 5).map((task) => `<a class="dashboard-task-row" href="/projects/${task.projectId}" data-nav><span class="priority-pill priority-${task.priority.toLowerCase()}">${escapeHtml(task.priority)}</span><div><strong>${escapeHtml(task.title)}</strong><span>${escapeHtml(task.projectName)} · ${escapeHtml(task.columnName)}</span></div><time>${escapeHtml(task.dueDate || '')}</time></a>`).join('')}</div>` : `<div class="dashboard-empty-line">${emptyText}</div>`}</article>`; }
+async function renderDashboard() {
+  let dashboard = { stats: { projectCount: state.projects.length, assignedCount: 0, completedCount: 0, overdueCount: 0 }, recentActivity: [], dueToday: [], dueThisWeek: [], overdueTasks: [], projectProgress: [], workload: [] };
+  try { dashboard = await api.get('/api/dashboard'); } catch {}
+  const stats = dashboard.stats || {};
+  const stat = (label, value, iconName, tone = '') => `<article class="stat-card ${tone}"><div class="stat-top"><span>${label}</span><span class="stat-icon">${icon(iconName, 16)}</span></div><div class="stat-value">${Number(value || 0)}</div></article>`;
+  const projects = dashboard.projectProgress?.length ? `<div class="progress-project-list">${dashboard.projectProgress.map((project) => `<a class="progress-project-row" href="/projects/${project.id}" data-nav><span class="project-dot" style="background:${escapeHtml(project.color)}"></span><div><strong>${escapeHtml(project.name)}</strong><span>${project.completedCount}/${project.taskCount} tasks complete</span></div><div class="progress-project-bar"><span style="width:${project.progress}%;background:${escapeHtml(project.color)}"></span></div><b>${project.progress}%</b></a>`).join('')}</div>` : emptyState('No projects yet', 'Start with a focused project, then invite the people who will move it forward.', button(`${icon('plus', 15)} Create a project`, 'new-project', 'btn-primary'));
+  const activity = dashboard.recentActivity?.length ? `<div class="activity-list">${dashboard.recentActivity.map((item) => `<div class="activity-row"><span class="activity-marker"></span><div><p><strong>${escapeHtml(item.actorName)}</strong> ${escapeHtml(item.action)} in <strong>${escapeHtml(item.projectName)}</strong></p><time>${formatRelative(item.createdAt)}</time></div></div>`).join('')}</div>` : emptyState('Your workspace is ready.', 'Create your first project and give the next step a clear home.', button(`${icon('plus', 15)} Create a project`, 'new-project', 'btn-primary'));
+  const workload = dashboard.workload?.length ? `<div class="workload-list">${(() => { const max = Math.max(...dashboard.workload.map((member) => member.openTasks), 1); return dashboard.workload.map((member) => `<div class="workload-row"><div class="workload-person"><span class="avatar" style="background:${escapeHtml(member.avatarColor || '#6366F1')}">${escapeHtml(initials(member))}</span><span><strong>${escapeHtml(member.displayName || member.username)}</strong><small>${member.openTasks} open ${member.openTasks === 1 ? 'task' : 'tasks'}</small></span></div><div class="workload-bar"><span style="width:${Math.round((member.openTasks / max) * 100)}%"></span></div></div>`).join(''); })()}</div>` : emptyState('No assigned work yet', 'Assign a task to a teammate to see workload here.');
+  const quickActions = `<div class="quick-actions"><button type="button" class="quick-action" data-action="new-project">${icon('plus', 17)}<span><strong>New project</strong><small>Start a shared workspace</small></span></button><a class="quick-action" href="/tasks" data-nav>${icon('checkCircle', 17)}<span><strong>My tasks</strong><small>Review your queue</small></span></a><a class="quick-action" href="/notifications" data-nav>${icon('bell', 17)}<span><strong>Notifications</strong><small>Catch up on updates</small></span></a></div>`;
+  const content = `<section class="page-heading"><div><p class="eyebrow"><span class="eyebrow-dot"></span> Your command center</p><h1>Good to see you, ${escapeHtml((state.user?.displayName || state.user?.username || 'there').split(' ')[0])}.</h1><p>Here is the shape of your work today.</p></div><div class="page-actions">${button(`${icon('layers', 16)} New project`, 'new-project', 'btn-primary')}</div></section><section class="stats-grid">${stat('Projects', stats.projectCount ?? state.projects.length, 'layers')}${stat('Assigned to me', stats.assignedCount, 'checkCircle')}${stat('Completed', stats.completedCount, 'target', 'stat-success')}${stat('Overdue', stats.overdueCount, 'clock', 'stat-danger')}</section><section class="dashboard-grid">${dashboardTaskRows('Due today', dashboard.dueToday || [], 'Nothing due today.')}${dashboardTaskRows('Overdue', dashboard.overdueTasks || [], 'No overdue tasks.')}</section><section class="panel project-panel"><div class="panel-heading"><h2>Project progress</h2><a href="/projects" data-nav>View all ${icon('arrow', 13)}</a></div>${projects}</section><section class="dashboard-grid"><article class="panel"><div class="panel-heading"><h2>Due this week</h2><span class="soft small">${dashboard.dueThisWeek?.length || 0}</span></div>${dashboardTaskRows('', dashboard.dueThisWeek || [], 'Your week is clear.')}</article><article class="panel"><div class="panel-heading"><h2>Recent activity</h2><a href="/notifications" data-nav>View all ${icon('arrow', 13)}</a></div>${activity}</article></section><section class="dashboard-lower-grid"><article class="panel"><div class="panel-heading"><h2>Team workload</h2><span class="soft small">Open tasks</span></div>${workload}</article><article class="panel"><div class="panel-heading"><h2>Quick actions</h2><span class="soft small">Move work forward</span></div>${quickActions}</article></section>`;
+  return appShell(content, 'dashboard');
+}
+function renderProjectsPage() { const content = `<section class="page-heading"><div><p class="eyebrow"><span class="eyebrow-dot"></span> Shared workspaces</p><h1>Projects</h1><p>${plural(state.projects.length, 'project')} across your Taskora workspace.</p></div><div class="page-actions">${button(`${icon('plus', 16)} New project`, 'new-project', 'btn-primary')}</div></section>${state.projects.length ? `<div class="project-grid project-grid-large">${state.projects.map(projectCard).join('')}</div>` : `<div class="panel">${emptyState('Create your first project', 'Give your next initiative a name, a clear owner, and a place for the team to work.', button(`${icon('plus', 15)} New project`, 'new-project', 'btn-primary'))}</div>`}`; return appShell(content, 'projects'); }
+
+function overdue(task) { return task.dueDate && task.columnName?.toLowerCase() !== 'done' && new Date(`${task.dueDate}T23:59:59`) < new Date(); }
+function taskCard(task, project, columns) { const editable = canEditTasks(project.role); const index = columns.findIndex((column) => column.id === task.columnId); const due = task.dueDate ? `<span class="task-due ${overdue(task) ? 'overdue' : ''}">${icon('calendar', 12)} ${escapeHtml(task.dueDate)}${overdue(task) ? ' · overdue' : ''}</span>` : ''; const assignees = task.assignees?.length ? `<div class="avatar-stack">${task.assignees.slice(0, 3).map((user) => `<span class="avatar" style="background:${escapeHtml(user.avatarColor || '#6366F1')}" title="${escapeHtml(user.displayName)}">${escapeHtml(initials(user))}</span>`).join('')}</div>` : ''; const labels = task.labels?.length ? `<div class="task-labels">${task.labels.slice(0, 3).map((label) => `<span class="task-label" style="--label-color:${escapeHtml(label.color)}">${escapeHtml(label.name)}</span>`).join('')}</div>` : ''; const checklist = task.checklistCount ? `<span class="task-checklist">${icon('checkCircle', 12)} ${task.checklistCompleted}/${task.checklistCount}</span>` : ''; return `<article class="task-card" draggable="${editable}" data-task-id="${task.id}"><div class="task-card-head"><span class="priority-pill priority-${task.priority.toLowerCase()}">${escapeHtml(task.priority)}</span><button class="task-more" type="button" data-action="edit-task" data-task-id="${task.id}" aria-label="Edit ${escapeHtml(task.title)}">${icon('more', 15)}</button></div><h3><button class="task-title-button" type="button" data-action="open-task" data-task-id="${task.id}">${escapeHtml(task.title)}</button></h3>${task.description ? `<p>${escapeHtml(task.description)}</p>` : ''}${labels}<div class="task-card-foot"><div>${due}${checklist}${assignees}</div>${editable ? `<div class="mobile-task-actions"><button type="button" data-action="move-task" data-direction="left" data-task-id="${task.id}" ${index <= 0 ? 'disabled' : ''} aria-label="Move task left"><span class="move-icon left">${icon('arrow', 13)}</span></button><button type="button" data-action="move-task" data-direction="right" data-task-id="${task.id}" ${index >= columns.length - 1 ? 'disabled' : ''} aria-label="Move task right"><span class="move-icon">${icon('arrow', 13)}</span></button></div>` : ''}</div></article>`; }
+function filterBar(project) { const labels = state.projectLabels || []; return `<form class="task-filter-bar" id="task-filter-form"><label class="filter-search">${icon('search', 15)}<input name="search" value="${escapeHtml(state.filters.search)}" placeholder="Search tasks…" /></label><select name="priority" aria-label="Filter priority"><option value="">All priorities</option>${['Low', 'Medium', 'High', 'Urgent'].map((item) => `<option value="${item}" ${state.filters.priority === item ? 'selected' : ''}>${item}</option>`).join('')}</select><select name="labelId" aria-label="Filter label"><option value="">All labels</option>${labels.map((label) => `<option value="${label.id}" ${String(state.filters.labelId) === String(label.id) ? 'selected' : ''}>${escapeHtml(label.name)}</option>`).join('')}</select><select name="due" aria-label="Filter due date"><option value="">Any due date</option><option value="today" ${state.filters.due === 'today' ? 'selected' : ''}>Due today</option><option value="week" ${state.filters.due === 'week' ? 'selected' : ''}>Due this week</option><option value="overdue" ${state.filters.due === 'overdue' ? 'selected' : ''}>Overdue</option></select><label class="filter-check"><input type="checkbox" name="assignee" value="me" ${state.filters.assignee === 'me' ? 'checked' : ''} /> Assigned to me</label><button class="btn btn-secondary filter-apply" type="submit">Apply filters</button></form>`; }
+function renderListView(project, tasks) { const sorted = [...tasks].sort((a, b) => { if (state.listSort === 'priority') return ['Urgent', 'High', 'Medium', 'Low'].indexOf(a.priority) - ['Urgent', 'High', 'Medium', 'Low'].indexOf(b.priority); if (state.listSort === 'title') return a.title.localeCompare(b.title); return String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999')); }); return `<div class="list-view panel"><div class="list-view-head"><span>${plural(tasks.length, 'task')} shown</span><label>Sort <select data-action="sort-list"><option value="dueDate" ${state.listSort === 'dueDate' ? 'selected' : ''}>Due date</option><option value="priority" ${state.listSort === 'priority' ? 'selected' : ''}>Priority</option><option value="title" ${state.listSort === 'title' ? 'selected' : ''}>Title</option></select></label></div><div class="task-table-wrap"><table class="task-table"><thead><tr><th>Task</th><th>Status</th><th>Priority</th><th>Assignees</th><th>Due</th></tr></thead><tbody>${sorted.length ? sorted.map((task) => `<tr><td><button class="table-task-title" data-action="open-task" data-task-id="${task.id}">${escapeHtml(task.title)}</button><small>${escapeHtml(task.description || '')}</small></td><td><span class="status-chip">${escapeHtml(task.columnName)}</span></td><td><span class="priority-pill priority-${task.priority.toLowerCase()}">${escapeHtml(task.priority)}</span></td><td><div class="avatar-stack">${task.assignees?.map((user) => `<span class="avatar" style="background:${escapeHtml(user.avatarColor || '#6366F1')}" title="${escapeHtml(user.displayName)}">${escapeHtml(initials(user))}</span>`).join('') || '<span class="soft small">Unassigned</span>'}</div></td><td class="${overdue(task) ? 'overdue' : ''}">${escapeHtml(task.dueDate || '—')}</td></tr>`).join('') : `<tr><td colspan="5">${emptyState('No matching tasks', 'Try widening your filters or create a new task.')}</td></tr>`}</tbody></table></div></div>`; }
+function renderCalendarView(project, tasks) { const now = new Date(); const year = now.getFullYear(); const month = now.getMonth(); const firstDay = new Date(year, month, 1).getDay(); const days = new Date(year, month + 1, 0).getDate(); const cells = []; for (let index = 0; index < firstDay; index += 1) cells.push('<div class="calendar-cell muted-cell"></div>'); for (let day = 1; day <= days; day += 1) { const key = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`; const items = tasks.filter((task) => task.dueDate === key); cells.push(`<div class="calendar-cell"><b>${day}</b><div class="calendar-task-list">${items.map((task) => `<button type="button" class="calendar-task priority-${task.priority.toLowerCase()}" data-action="open-task" data-task-id="${task.id}">${escapeHtml(task.title)}</button>`).join('')}</div></div>`); } return `<div class="calendar-view panel"><div class="calendar-heading"><h2>${now.toLocaleString('en', { month: 'long', year: 'numeric' })}</h2><span class="soft small">${tasks.filter((task) => task.dueDate).length} scheduled tasks</span></div><div class="calendar-weekdays">${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => `<span>${day}</span>`).join('')}</div><div class="calendar-grid">${cells.join('')}</div></div>`; }
+function renderBoard(project, tasks) { const columns = project.columns || []; const editable = canEditTasks(project.role); const manager = isManager(project.role); return `<div class="board-toolbar"><div><span class="soft small">${plural(tasks.length, 'task')} · ${plural(columns.length, 'column')}</span></div><div class="board-toolbar-actions">${button(`${icon('checkCircle', 14)} Assigned to me`, 'assigned-filter', state.filters.assignee === 'me' ? 'btn-primary' : 'btn-secondary')} ${manager ? button(`${icon('plus', 14)} Add column`, 'new-column', 'btn-secondary') : ''}${editable ? button(`${icon('plus', 14)} New task`, 'new-task', 'btn-primary') : ''}</div></div><section class="kanban-board" aria-label="Kanban board">${columns.map((column, columnIndex) => { const columnTasks = tasks.filter((task) => task.columnId === column.id).sort((a, b) => a.position - b.position || a.id - b.id); return `<article class="kanban-column" data-column-drop data-column-id="${column.id}"><header class="kanban-column-head"><div class="column-name"><span class="project-dot" style="background:${escapeHtml(column.color)}"></span><strong>${escapeHtml(column.name)}</strong><span class="count-badge">${columnTasks.length}</span></div><div class="column-actions">${manager ? `${columnIndex > 0 ? `<button type="button" data-action="move-column" data-column-id="${column.id}" data-direction="left" aria-label="Move column left">${icon('arrow', 13)}</button>` : ''}${columnIndex < columns.length - 1 ? `<button type="button" data-action="move-column" data-column-id="${column.id}" data-direction="right" aria-label="Move column right"><span class="move-icon">${icon('arrow', 13)}</span></button>` : ''}<button type="button" data-action="edit-column" data-column-id="${column.id}" aria-label="Edit column">${icon('more', 14)}</button><button type="button" data-action="delete-column" data-column-id="${column.id}" aria-label="Delete column">${icon('logout', 14)}</button>` : ''}</div></header><div class="kanban-column-body">${columnTasks.length ? columnTasks.map((task) => taskCard(task, project, columns)).join('') : `<div class="column-empty">Drop work here</div>`}</div></article>`; }).join('')}</section>`; }
+function renderProjectView(project, tasks) { return `${filterBar(project)}${state.viewMode === 'list' ? renderListView(project, tasks) : state.viewMode === 'calendar' ? renderCalendarView(project, tasks) : renderBoard(project, tasks)}`; }
+function renderMembersAndSettings(project) { const manager = isManager(project.role); const owner = project.role === 'Owner'; const members = project.members?.map((member) => `<div class="member-row"><div class="member-identity"><span class="avatar" style="background:${escapeHtml(member.avatarColor || '#6366F1')}">${escapeHtml(initials(member))}</span><div><strong>${escapeHtml(member.displayName)}</strong><span>@${escapeHtml(member.username)} · ${escapeHtml(member.email)}</span></div></div><div class="member-actions"><select class="role-select ${roleTone(member.role)}" data-action="role-change" data-project-id="${project.id}" data-user-id="${member.id}" ${member.role === 'Owner' || (!owner && member.role === 'Admin') ? 'disabled' : ''} aria-label="Role for ${escapeHtml(member.displayName)}">${['Owner', 'Admin', 'Member', 'Viewer'].map((role) => `<option value="${role}" ${role === member.role ? 'selected' : ''} ${role === 'Owner' ? 'disabled' : (!owner && role === 'Admin' ? 'disabled' : '')}>${role}</option>`).join('')}</select>${member.role !== 'Owner' && owner ? `<button class="icon-button danger-button" type="button" data-action="remove-member" data-project-id="${project.id}" data-user-id="${member.id}" aria-label="Remove ${escapeHtml(member.displayName)}">${icon('logout', 15)}</button>` : ''}</div></div>`).join('') || ''; const invite = manager ? `<form class="inline-form invite-form" id="invite-form"><div class="field"><label for="inviteIdentifier">Invite by username or email</label><input id="inviteIdentifier" name="identifier" placeholder="e.g. teammate@company.com" required /></div><div class="field compact-field"><label for="inviteRole">Role</label><select id="inviteRole" name="role">${owner ? '<option>Admin</option>' : ''}<option selected>Member</option><option>Viewer</option></select></div><button class="btn btn-primary" type="submit">${icon('plus', 15)} Add member</button></form>` : `<div class="permission-note">${icon('shield', 15)} Only project admins and owners can manage members.</div>`; const settings = manager ? `<div class="settings-card"><div class="panel-heading"><h2>Project settings</h2>${icon('settings', 17)}</div><form class="settings-form" id="project-settings-form"><input type="hidden" name="projectId" value="${project.id}" /><div class="settings-form-grid"><div class="field"><label for="projectName">Project name</label><input id="projectName" name="name" value="${escapeHtml(project.name)}" required /></div><div class="field"><label for="projectColor">Accent color</label><input id="projectColor" class="color-input" name="color" type="color" value="${escapeHtml(project.color)}" /></div></div><div class="field"><label for="projectDescription">Description</label><textarea id="projectDescription" name="description" rows="3" maxlength="500">${escapeHtml(project.description || '')}</textarea></div><div class="settings-actions"><button class="btn btn-secondary" type="submit">Save changes</button>${owner ? button('Delete project', 'delete-project', 'btn-danger', `data-project-id="${project.id}"`) : button('Leave project', 'leave-project', 'btn-ghost', `data-project-id="${project.id}"`)}</div></form></div>` : `<div class="settings-card"><div class="panel-heading"><h2>Project access</h2>${icon('shield', 17)}</div><div class="permission-note">You have <strong>${escapeHtml(project.role)}</strong> access.</div><div class="settings-actions">${button('Leave project', 'leave-project', 'btn-danger', `data-project-id="${project.id}"`)}</div></div>`; return `<section class="project-settings-grid"><div class="settings-card"><div class="panel-heading"><h2>Members <span class="count-badge">${project.members?.length || 0}</span></h2>${icon('users', 17)}</div><div class="member-list">${members || emptyState('No members yet', 'Invite someone to start collaborating.')}</div><div class="invite-area">${invite}</div></div>${settings}</section>`; }
+function renderProjectDetail(project, tasks) { const manager = isManager(project.role); const owner = project.role === 'Owner'; const editable = canEditTasks(project.role); return appShell(`<section class="project-hero"><div><a class="back-link" href="/projects" data-nav>${icon('arrow', 14)} Back to projects</a><div class="project-title-row"><span class="project-icon project-icon-large" style="color:${escapeHtml(project.color)};background:${escapeHtml(project.color)}18">${icon(project.icon || 'layers', 24)}</span><div><p class="eyebrow"><span class="eyebrow-dot"></span> ${escapeHtml(project.role)} access</p><h1>${escapeHtml(project.name)}</h1><p>${escapeHtml(project.description || 'No description yet.')}</p></div></div></div><div class="project-hero-actions"><div class="presence-list" id="presence-list"><span class="presence-count">Live board</span></div><div class="page-actions">${manager ? button(`${icon('settings', 15)} Edit project`, 'edit-project', 'btn-secondary', `data-project-id="${project.id}"`) : ''}${editable ? button(`${icon('plus', 15)} New task`, 'new-task', 'btn-primary') : ''}</div></div></section><div class="project-tabs"><button type="button" class="project-tab ${state.viewMode === 'board' ? 'active' : ''}" data-action="set-view" data-view="board">${icon('layout', 15)} Board</button><button type="button" class="project-tab ${state.viewMode === 'list' ? 'active' : ''}" data-action="set-view" data-view="list">${icon('file', 15)} List</button><button type="button" class="project-tab ${state.viewMode === 'calendar' ? 'active' : ''}" data-action="set-view" data-view="calendar">${icon('calendar', 15)} Calendar</button></div>${renderProjectView(project, tasks)}${renderMembersAndSettings(project)}`, `project-${project.id}`); }
+function renderPlaceholder(title, description, active) { return appShell(`<section class="page-heading"><div><p class="eyebrow"><span class="eyebrow-dot"></span> Taskora workspace</p><h1>${title}</h1><p>${description}</p></div></section><div class="placeholder-page">${emptyState('This space is being prepared.', 'The next Taskora phase will bring this workspace to life.', button(`${icon('arrow', 15)} Back to dashboard`, 'nav-dashboard', 'btn-primary'))}</div>`, active); }
+function renderSettings() { const user = state.user; return appShell(`<section class="page-heading"><div><p class="eyebrow"><span class="eyebrow-dot"></span> Preferences</p><h1>Settings</h1><p>Make Taskora feel like your workspace.</p></div></section><div class="settings-layout"><article class="panel settings-card"><div class="panel-heading"><h2>Profile</h2>${icon('user', 17)}</div><form id="profile-settings-form" class="settings-form"><div class="profile-preview"><span class="avatar avatar-large" style="background:${escapeHtml(user?.avatarColor || '#6366F1')}">${escapeHtml(initials(user))}</span><div><strong>${escapeHtml(user?.displayName || '')}</strong><p>@${escapeHtml(user?.username || '')} · ${escapeHtml(user?.email || '')}</p></div></div><div class="field"><label for="settingsDisplayName">Display name</label><input id="settingsDisplayName" name="displayName" value="${escapeHtml(user?.displayName || '')}" minlength="2" maxlength="60" required /></div><div class="settings-form-grid"><div class="field"><label for="settingsAvatarColor">Avatar color</label><input id="settingsAvatarColor" class="color-input" name="avatarColor" type="color" value="${escapeHtml(user?.avatarColor || '#6366F1')}" /></div><div class="field"><label for="settingsAvatarUrl">Avatar URL</label><input id="settingsAvatarUrl" name="avatarUrl" type="url" value="${escapeHtml(user?.avatarUrl || '')}" placeholder="https://…" /></div></div><div class="field"><label for="settingsTheme">Theme preference</label><select id="settingsTheme" name="theme"><option value="system">System</option><option value="light" ${state.theme === 'light' ? 'selected' : ''}>Light</option><option value="dark" ${state.theme === 'dark' ? 'selected' : ''}>Dark</option></select></div><button class="btn btn-primary" type="submit">Save profile</button></form></article><article class="panel settings-card"><div class="panel-heading"><h2>Change password</h2>${icon('shield', 17)}</div><form id="password-form" class="settings-form"><div class="field"><label for="currentPassword">Current password</label><input id="currentPassword" name="currentPassword" type="password" required /></div><div class="field"><label for="newPassword">New password</label><input id="newPassword" name="newPassword" type="password" minlength="8" required /><span class="field-help">Use at least 8 characters.</span></div><button class="btn btn-secondary" type="submit">Update password</button></form><div class="shortcut-card"><strong>Keyboard shortcuts</strong><span><kbd>N</kbd> new task · <kbd>/</kbd> search · <kbd>Esc</kbd> close dialogs</span></div></article></div>`, 'settings'); }
+function openProjectModal(project = null) { const modal = document.querySelector('#modal-root'); if (!modal) return; modal.innerHTML = `<div class="dialog-backdrop" data-action="close-modal"><div class="confirm-dialog project-modal" role="dialog" aria-modal="true" data-modal-card><div class="modal-heading"><div><p class="eyebrow"><span class="eyebrow-dot"></span> ${project ? 'Project details' : 'New workspace'}</p><h2>${project ? 'Edit project' : 'Create a project'}</h2></div><button class="icon-button" type="button" data-action="close-modal" aria-label="Close">${icon('more', 17)}</button></div><form id="project-form" class="settings-form"><input type="hidden" name="projectId" value="${project?.id || ''}" /><div class="field"><label for="modalProjectName">Project name</label><input id="modalProjectName" name="name" value="${escapeHtml(project?.name || '')}" placeholder="e.g. Website Redesign" required /></div><div class="field"><label for="modalProjectDescription">Description</label><textarea id="modalProjectDescription" name="description" rows="3" maxlength="500" placeholder="What will this team deliver?">${escapeHtml(project?.description || '')}</textarea></div><div class="settings-form-grid"><div class="field"><label for="modalProjectColor">Accent color</label><input id="modalProjectColor" class="color-input" name="color" type="color" value="${escapeHtml(project?.color || '#6366F1')}" /></div><div class="field"><label for="modalProjectIcon">Icon</label><select id="modalProjectIcon" name="icon"><option value="folder-kanban">Board</option><option value="layers">Layers</option><option value="target">Target</option><option value="spark">Spark</option><option value="calendar">Calendar</option></select></div></div><div class="dialog-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">${project ? 'Save changes' : 'Create project'} ${icon('arrow', 15)}</button></div></form></div></div>`; const select = modal.querySelector('#modalProjectIcon'); if (select && project?.icon) select.value = project.icon; modal.querySelector('#modalProjectName')?.focus(); }
+function openTaskModal(project, task = null) { const modal = document.querySelector('#modal-root'); if (!modal) return; modal.innerHTML = `<div class="dialog-backdrop" data-action="close-modal"><div class="confirm-dialog project-modal" role="dialog" aria-modal="true" data-modal-card><div class="modal-heading"><div><p class="eyebrow"><span class="eyebrow-dot"></span> ${task ? 'Task details' : 'New task'}</p><h2>${task ? 'Edit task' : 'Create a task'}</h2></div><button class="icon-button" type="button" data-action="close-modal" aria-label="Close">${icon('more', 17)}</button></div><form id="task-form" class="settings-form"><input type="hidden" name="taskId" value="${task?.id || ''}" /><div class="field"><label for="modalTaskTitle">Task title</label><input id="modalTaskTitle" name="title" value="${escapeHtml(task?.title || '')}" placeholder="e.g. Review homepage copy" required maxlength="140" /></div><div class="field"><label for="modalTaskDescription">Description</label><textarea id="modalTaskDescription" name="description" rows="3" maxlength="5000" placeholder="Add a short context for the team…">${escapeHtml(task?.description || '')}</textarea></div><div class="task-form-grid"><div class="field"><label for="modalTaskPriority">Priority</label><select id="modalTaskPriority" name="priority">${['Low', 'Medium', 'High', 'Urgent'].map((priority) => `<option ${priority === (task?.priority || 'Medium') ? 'selected' : ''}>${priority}</option>`).join('')}</select></div><div class="field"><label for="modalTaskDue">Due date</label><input id="modalTaskDue" name="dueDate" type="date" value="${escapeHtml(task?.dueDate || '')}" /></div><div class="field"><label for="modalTaskColumn">Column</label><select id="modalTaskColumn" name="columnId">${(project.columns || []).map((column) => `<option value="${column.id}" ${column.id === (task?.columnId || project.columns[0]?.id) ? 'selected' : ''}>${escapeHtml(column.name)}</option>`).join('')}</select></div></div><div class="dialog-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">${task ? 'Save task' : 'Create task'} ${icon('arrow', 15)}</button></div></form></div></div>`; modal.querySelector('#modalTaskTitle')?.focus(); }
+function openColumnModal(project, column = null) { const modal = document.querySelector('#modal-root'); if (!modal) return; modal.innerHTML = `<div class="dialog-backdrop" data-action="close-modal"><div class="confirm-dialog project-modal" role="dialog" aria-modal="true" data-modal-card><div class="modal-heading"><div><p class="eyebrow"><span class="eyebrow-dot"></span> Board setup</p><h2>${column ? 'Edit column' : 'Add column'}</h2></div><button class="icon-button" type="button" data-action="close-modal" aria-label="Close">${icon('more', 17)}</button></div><form id="column-form" class="settings-form"><input type="hidden" name="columnId" value="${column?.id || ''}" /><div class="field"><label for="modalColumnName">Column name</label><input id="modalColumnName" name="name" value="${escapeHtml(column?.name || '')}" placeholder="e.g. Ready for review" required maxlength="40" /></div><div class="field"><label for="modalColumnColor">Column color</label><input id="modalColumnColor" class="color-input" name="color" type="color" value="${escapeHtml(column?.color || '#6366F1')}" /></div><div class="dialog-actions"><button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button><button type="submit" class="btn btn-primary">${column ? 'Save column' : 'Add column'} ${icon('arrow', 15)}</button></div></form></div></div>`; modal.querySelector('#modalColumnName')?.focus(); }
+
+async function openTaskDrawer(taskId) {
+  const result = await api.get(`/api/tasks/${taskId}/detail`).catch(() => null);
+  if (!result?.task) { showToast('Task details could not be loaded.', 'error'); return; }
+  const task = result.task;
+  const labelsResult = await api.get(`/api/projects/${task.projectId}/labels`).catch(() => ({ labels: [] }));
+  const availableLabels = labelsResult.labels || [];
+  const manager = isManager(state.project?.role);
+  const canEdit = canEditTasks(state.project?.role);
+  const drawer = document.querySelector('#drawer-root');
+  if (!drawer) return;
+  drawer.innerHTML = `<div class="drawer-backdrop" data-action="close-drawer"><aside class="task-drawer" role="dialog" aria-modal="true" aria-labelledby="task-drawer-title" data-task-drawer><header class="task-drawer-head"><div><p class="eyebrow"><span class="eyebrow-dot"></span> ${escapeHtml(task.columnName || 'Task')}</p><h2 id="task-drawer-title">Task details</h2></div><button class="icon-button" type="button" data-action="close-drawer" aria-label="Close task details">${icon('more', 17)}</button></header><div class="task-drawer-scroll"><form id="task-detail-form" class="drawer-section"><input type="hidden" name="taskId" value="${task.id}" /><div class="field"><label for="drawerTaskTitle">Title</label><input id="drawerTaskTitle" name="title" value="${escapeHtml(task.title)}" ${canEdit ? '' : 'readonly'} required /></div><div class="field"><label for="drawerTaskDescription">Description</label><textarea id="drawerTaskDescription" name="description" rows="4" ${canEdit ? '' : 'readonly'}>${escapeHtml(task.description || '')}</textarea></div><div class="task-form-grid"><div class="field"><label for="drawerTaskPriority">Priority</label><select id="drawerTaskPriority" name="priority" ${canEdit ? '' : 'disabled'}>${['Low', 'Medium', 'High', 'Urgent'].map((priority) => `<option ${priority === task.priority ? 'selected' : ''}>${priority}</option>`).join('')}</select></div><div class="field"><label for="drawerTaskDue">Due date</label><input id="drawerTaskDue" name="dueDate" type="date" value="${escapeHtml(task.dueDate || '')}" ${canEdit ? '' : 'readonly'} /></div></div><button class="btn btn-secondary btn-full" type="submit" ${canEdit ? '' : 'disabled'}>${icon('check', 14)} Save task details</button></form><section class="drawer-section"><div class="drawer-section-heading"><h3>Assignees</h3><span class="soft small">${task.assignees?.length || 0} selected</span></div><div class="assignee-picker">${(state.project?.members || []).map((member) => `<label class="assignee-option"><input type="checkbox" name="drawerAssigneeIds" value="${member.id}" ${task.assignees?.some((assignee) => assignee.id === member.id) ? 'checked' : ''} ${canEdit ? '' : 'disabled'} /><span class="avatar" style="background:${escapeHtml(member.avatarColor || '#6366F1')}">${escapeHtml(initials(member))}</span><span>${escapeHtml(member.displayName)}<small>${escapeHtml(member.role)}</small></span></label>`).join('')}</div></section><section class="drawer-section"><div class="drawer-section-heading"><h3>Labels</h3><span class="soft small">${task.labels?.length || 0} applied</span></div><div class="label-picker">${availableLabels.length ? availableLabels.map((label) => `<label class="label-option"><input type="checkbox" name="drawerLabelIds" value="${label.id}" ${task.labels?.some((item) => item.id === label.id) ? 'checked' : ''} ${canEdit ? '' : 'disabled'} /><span class="task-label" style="--label-color:${escapeHtml(label.color)}">${escapeHtml(label.name)}</span></label>`).join('') : `<span class="soft small">No labels yet.</span>`}</div>${manager ? `<form id="label-form" class="new-label-form"><input name="name" placeholder="New label" maxlength="32" required /><input name="color" class="color-input" type="color" value="#6366F1" aria-label="Label color" /><button class="icon-button" type="submit" aria-label="Create label">${icon('plus', 15)}</button></form>` : ''}</section><section class="drawer-section"><div class="drawer-section-heading"><h3>Checklist</h3><span class="checklist-progress">${task.checklistProgress || 0}%</span></div><div class="checklist-list">${task.checklist?.length ? task.checklist.map((item) => `<div class="checklist-row"><label><input type="checkbox" data-action="toggle-checklist" data-checklist-id="${item.id}" data-task-id="${task.id}" ${item.completed ? 'checked' : ''} ${canEdit ? '' : 'disabled'} /><span class="checkmark-box"></span><span class="checklist-title ${item.completed ? 'completed' : ''}">${escapeHtml(item.title)}</span></label>${canEdit ? `<button class="icon-button danger-button" type="button" data-action="delete-checklist" data-checklist-id="${item.id}" data-task-id="${task.id}" aria-label="Delete checklist item">${icon('logout', 13)}</button>` : ''}</div>`).join('') : `<span class="soft small">No checklist items yet.</span>`}</div>${canEdit ? `<form id="checklist-form" class="new-checklist-form"><input name="title" placeholder="Add a checklist item" maxlength="160" required /><button class="icon-button" type="submit" aria-label="Add checklist item">${icon('plus', 15)}</button></form>` : ''}</section><section class="drawer-section"><div class="drawer-section-heading"><h3>Comments</h3><span class="presence-count">${task.comments?.length || 0} comments</span></div><div class="comment-list">${task.comments?.length ? task.comments.map((comment) => `<article class="comment-row"><span class="avatar" style="background:${escapeHtml(comment.author.avatarColor || '#6366F1')}">${escapeHtml(initials(comment.author))}</span><div class="comment-content"><div class="comment-meta"><strong>${escapeHtml(comment.author.displayName)}</strong><time>${formatRelative(comment.createdAt)}${comment.editedAt ? ' · edited' : ''}</time>${canEdit && (comment.author.id === state.user.id || manager) ? `<button class="comment-delete" type="button" data-action="delete-comment" data-comment-id="${comment.id}" data-task-id="${task.id}">Delete</button>` : ''}</div><p>${escapeHtml(comment.body)}</p></div></article>`).join('') : `<span class="soft small">No comments yet. Start the conversation.</span>`}</div>${canEdit ? `<form id="comment-form" class="comment-form"><div class="typing-indicator" id="typing-indicator"></div><textarea name="body" rows="2" maxlength="2000" placeholder="Write a comment… Use @mentions to call someone in." required></textarea><button class="btn btn-primary" type="submit">Comment ${icon('arrow', 14)}</button></form>` : ''}</section><section class="drawer-section"><div class="drawer-section-heading"><h3>Activity</h3><span class="soft small">${task.activity?.length || 0} events</span></div><div class="drawer-activity">${task.activity?.length ? task.activity.slice(0, 12).map((entry) => `<div class="drawer-activity-row"><span class="activity-marker"></span><div><strong>${escapeHtml(entry.actor.displayName)}</strong> ${escapeHtml(entry.action)}<time>${formatRelative(entry.createdAt)}</time></div></div>`).join('') : `<span class="soft small">No activity yet.</span>`}</div></section></div><footer class="task-drawer-foot">${canEdit ? button(`${icon('copy', 14)} Duplicate`, 'duplicate-task', 'btn-secondary', `data-task-id="${task.id}"`) : ''}${canEdit && !task.archived ? button(`${icon('archive', 14)} Archive`, 'archive-task', 'btn-ghost', `data-task-id="${task.id}"`) : ''}${task.archived ? '<span class="role-pill role-viewer">Archived</span>' : ''}</footer></aside></div>`;
+}
+
+async function loadProjects() { try { state.projects = (await api.get('/api/projects')).projects || []; } catch { state.projects = []; } }
+async function render() { const path = window.location.pathname; const session = await api.me().catch(() => null); state.user = session?.user || null; if (state.user) { const notificationResult = await api.get('/api/notifications').catch(() => ({ notifications: [], unreadCount: 0 })); state.notifications = notificationResult.notifications || []; state.unreadNotifications = Number(notificationResult.unreadCount || 0); setupSocket(); } else if (state.socket) { state.socket.disconnect(); state.socket = null; } const loggedOutRoute = path === '/' || path === '/login' || path === '/register'; if (!state.user && !loggedOutRoute) { window.history.replaceState({}, '', '/'); root.innerHTML = renderLanding(); return; } if (state.user && (path === '/' || path === '/login' || path === '/register')) { window.history.replaceState({}, '', '/app'); return render(); } if (!state.user) { root.innerHTML = path === '/register' ? renderAuth('register') : path === '/login' ? renderAuth('login') : renderLanding(); return; } await loadProjects(); if (path === '/settings') { root.innerHTML = renderSettings(); return; } if (path === '/notifications') { root.innerHTML = appShell(notificationCenterContent(), 'notifications'); return; } if (path === '/tasks') { root.innerHTML = renderPlaceholder('My tasks', 'A focused view of everything assigned to you.', 'tasks'); return; } if (path === '/projects') { root.innerHTML = renderProjectsPage(); return; } const projectMatch = path.match(/^\/projects\/(\d+)$/); if (projectMatch) { const projectId = Number(projectMatch[1]); const query = new URLSearchParams(Object.entries({ search: state.filters.search, priority: state.filters.priority, labelId: state.filters.labelId, due: state.filters.due, assigneeId: state.filters.assignee === 'me' ? 'me' : '' }).filter(([, value]) => value)); const [projectResult, taskResult, labelResult] = await Promise.all([api.get(`/api/projects/${projectId}`).catch(() => null), api.get(`/api/projects/${projectId}/tasks${query.toString() ? `?${query}` : ''}`).catch(() => ({ tasks: [] })), api.get(`/api/projects/${projectId}/labels`).catch(() => ({ labels: [] }))]); if (!projectResult?.project) { root.innerHTML = renderPlaceholder('Project unavailable', 'You may not be a member of this project, or it no longer exists.', 'projects'); return; } if (state.project?.id !== projectId) { state.viewMode = 'board'; state.filters = { search: '', priority: '', labelId: '', due: '', assignee: '' }; } state.project = projectResult.project; state.projectLabels = labelResult.labels || []; state.tasks = taskResult.tasks || []; root.innerHTML = renderProjectDetail(state.project, state.tasks); joinProjectRoom(state.project.id); return; } root.innerHTML = await renderDashboard(); }
+function showToast(message, type = 'success') { const stack = document.querySelector('#toast-stack'); if (!stack) return; const toast = document.createElement('div'); toast.className = `toast ${type}`; toast.innerHTML = `${icon(type === 'error' ? 'bell' : 'checkCircle', 16)}<span>${escapeHtml(message)}</span>`; stack.appendChild(toast); setTimeout(() => toast.remove(), 3400); }
+function navigate(href) { window.history.pushState({}, '', href); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+function findProject(id) { return state.project?.id === Number(id) ? state.project : state.projects.find((project) => project.id === Number(id)); }
+async function refreshProject() { await loadProjects(); await render(); }
+async function submitProjectForm(form) { const payload = Object.fromEntries(new FormData(form).entries()); const id = payload.projectId; delete payload.projectId; const result = id ? await api.put(`/api/projects/${id}`, payload) : await api.post('/api/projects', payload); document.querySelector('#modal-root').innerHTML = ''; showToast(id ? 'Project details updated.' : 'Project created.'); navigate(id ? `/projects/${id}` : `/projects/${result.project.id}`); }
+async function submitTaskForm(form) { const payload = Object.fromEntries(new FormData(form).entries()); const id = payload.taskId; delete payload.taskId; const result = id ? await api.put(`/api/tasks/${id}`, payload) : await api.post(`/api/projects/${state.project.id}/tasks`, payload); document.querySelector('#modal-root').innerHTML = ''; showToast(id ? 'Task updated.' : 'Task created.'); if (id && payload.columnId && Number(payload.columnId) !== Number(state.tasks.find((task) => task.id === Number(id))?.columnId)) await api.put(`/api/tasks/${id}/move`, { columnId: Number(payload.columnId), position: 999 }); await render(); return result; }
+async function moveTask(taskId, columnId, position = 999) { try { await api.put(`/api/tasks/${taskId}/move`, { columnId, position }); showToast('Task moved.'); await render(); } catch (error) { showToast(error.message, 'error'); await render(); } }
+async function submitColumnForm(form) { const payload = Object.fromEntries(new FormData(form).entries()); const id = payload.columnId; delete payload.columnId; const result = id ? await api.put(`/api/columns/${id}`, payload) : await api.post(`/api/projects/${state.project.id}/columns`, payload); document.querySelector('#modal-root').innerHTML = ''; showToast(id ? 'Column updated.' : 'Column added.'); await render(); return result; }
+
+async function handleClick(event) { const navTarget = event.target.closest('[data-nav]'); if (navTarget) { event.preventDefault(); document.querySelector('#app-sidebar')?.classList.remove('open'); document.querySelector('.sidebar-scrim')?.classList.remove('visible'); navigate(navTarget.dataset.nav || navTarget.getAttribute('href') || '/'); return; } const target = event.target.closest('[data-action]'); if (!target) return; const action = target.dataset.action; if (action === 'sidebar-toggle') { const sidebar = document.querySelector('#app-sidebar'); const scrim = document.querySelector('.sidebar-scrim'); const open = sidebar?.classList.toggle('open') || false; scrim?.classList.toggle('visible', open); document.querySelector('.sidebar-toggle')?.setAttribute('aria-expanded', String(open)); return; } if (action === 'landing-menu') { const menu = document.querySelector('#landing-mobile-menu'); const open = menu?.classList.toggle('visible') || false; target.setAttribute('aria-expanded', String(open)); return; } if (action === 'project-switcher') { const menu = document.querySelector('#project-switcher-menu'); const open = menu?.classList.toggle('visible') || false; target.setAttribute('aria-expanded', String(open)); return; } if (action === 'global-new-task') { if (state.project && canEditTasks(state.project.role)) openTaskModal(state.project); else if (state.project) showToast('You have read-only access to this project.', 'error'); else navigate('/projects'); return; } if (action === 'notification-toggle') { document.querySelector('#notification-popover')?.classList.toggle('visible'); return; } if (action === 'read-notification') { const id = Number(target.dataset.notificationId); try { await api.post(`/api/notifications/${id}/read`); const item = state.notifications.find((notification) => notification.id === id); if (item && !item.readAt) { item.readAt = new Date().toISOString(); state.unreadNotifications = Math.max(0, state.unreadNotifications - 1); } refreshNotificationBadge(); target.closest('.notification-item')?.classList.remove('unread'); } catch (error) { showToast(error.message, 'error'); } return; } if (action === 'read-all-notifications') { try { await api.post('/api/notifications/read-all'); state.notifications.forEach((notification) => { notification.readAt = notification.readAt || new Date().toISOString(); }); state.unreadNotifications = 0; refreshNotificationBadge(); document.querySelector('#notification-popover')?.classList.remove('visible'); if (window.location.pathname === '/notifications') render(); } catch (error) { showToast(error.message, 'error'); } return; } if (action === 'theme') { const next = state.theme === 'dark' ? 'light' : 'dark'; localStorage.setItem('taskora-theme', next); applyTheme(next); render(); return; } if (action === 'toggle-password') { const input = document.querySelector(`#${target.dataset.target}`); if (!input) return; input.type = input.type === 'password' ? 'text' : 'password'; target.innerHTML = icon(input.type === 'password' ? 'eye' : 'eyeOff', 17); return; } if (action === 'demo') { const identifier = document.querySelector('#identifier'); const password = document.querySelector('#loginPassword'); if (identifier && password) { identifier.value = 'demo@taskora.local'; password.value = 'Password123!'; showToast('Demo details filled.'); } return; } if (action === 'new-project') { openProjectModal(); return; } if (action === 'open-task') { await openTaskDrawer(Number(target.dataset.taskId)); return; } if (action === 'set-view') { state.viewMode = target.dataset.view || 'board'; await render(); return; } if (action === 'assigned-filter') { state.filters.assignee = state.filters.assignee === 'me' ? '' : 'me'; await render(); return; } if (action === 'edit-project') { openProjectModal(findProject(target.dataset.projectId)); return; } if (action === 'new-task') { if (state.project) openTaskModal(state.project); return; } if (action === 'edit-task') { const task = state.tasks.find((item) => item.id === Number(target.dataset.taskId)); if (task && canEditTasks(state.project?.role)) openTaskModal(state.project, task); return; } if (action === 'new-column') { if (state.project) openColumnModal(state.project); return; } if (action === 'toggle-checklist') { try { await api.put(`/api/checklist/${target.dataset.checklistId}`, { completed: target.checked }); await openTaskDrawer(Number(target.dataset.taskId)); } catch (error) { showToast(error.message, 'error'); } return; } if (action === 'delete-checklist') { if (!window.confirm('Remove this checklist item?')) return; try { await api.delete(`/api/checklist/${target.dataset.checklistId}`); await openTaskDrawer(Number(target.dataset.taskId)); } catch (error) { showToast(error.message, 'error'); } return; } if (action === 'delete-comment') { if (!window.confirm('Delete this comment?')) return; try { await api.delete(`/api/comments/${target.dataset.commentId}`); await openTaskDrawer(Number(target.dataset.taskId)); } catch (error) { showToast(error.message, 'error'); } return; } if (action === 'duplicate-task') { try { const result = await api.post(`/api/tasks/${target.dataset.taskId}/duplicate`); showToast('Task duplicated.'); document.querySelector('#drawer-root').innerHTML = ''; await render(); await openTaskDrawer(result.task.id); } catch (error) { showToast(error.message, 'error'); } return; } if (action === 'archive-task') { if (!window.confirm('Archive this task?')) return; try { await api.post(`/api/tasks/${target.dataset.taskId}/archive`); showToast('Task archived.'); document.querySelector('#drawer-root').innerHTML = ''; await render(); } catch (error) { showToast(error.message, 'error'); } return; } if (action === 'edit-column') { const column = state.project?.columns.find((item) => item.id === Number(target.dataset.columnId)); if (column) openColumnModal(state.project, column); return; } if (action === 'move-task') { const task = state.tasks.find((item) => item.id === Number(target.dataset.taskId)); const columns = state.project?.columns || []; if (!task) return; const current = columns.findIndex((column) => column.id === task.columnId); const next = current + (target.dataset.direction === 'left' ? -1 : 1); if (next >= 0 && next < columns.length) await moveTask(task.id, columns[next].id); return; } if (action === 'move-column') { const columns = [...(state.project?.columns || [])]; const index = columns.findIndex((column) => column.id === Number(target.dataset.columnId)); const next = index + (target.dataset.direction === 'left' ? -1 : 1); if (index >= 0 && next >= 0 && next < columns.length) { [columns[index], columns[next]] = [columns[next], columns[index]]; try { await api.put(`/api/projects/${state.project.id}/columns/reorder`, { columnIds: columns.map((column) => column.id) }); showToast('Columns reordered.'); await render(); } catch (error) { showToast(error.message, 'error'); } } return; } if (action === 'delete-column') { if (!window.confirm('Delete this empty column?')) return; try { await api.delete(`/api/columns/${target.dataset.columnId}`); showToast('Column deleted.'); await render(); } catch (error) { showToast(error.message, 'error'); } return; } if (action === 'close-drawer' && (!event.target.closest('[data-task-drawer]') || event.target.closest('[data-action="close-drawer"]'))) { document.querySelector('#drawer-root').innerHTML = ''; return; } if (action === 'close-modal' && (!event.target.closest('[data-modal-card]') || event.target.closest('[data-action="close-modal"]'))) { document.querySelector('#modal-root').innerHTML = ''; return; } if (action === 'logout') { await api.logout().catch(() => {}); navigate('/'); return; } if (action === 'nav-dashboard') { navigate('/app'); return; } if (action === 'coming-soon') { showToast('That workspace arrives in a later phase.'); return; } if (action === 'user-menu') { const menu = document.querySelector('#account-menu'); const open = menu?.classList.toggle('visible') || false; target.setAttribute('aria-expanded', String(open)); return; } if (action === 'delete-project') { if (!window.confirm('Delete this project permanently? This cannot be undone.')) return; try { await api.delete(`/api/projects/${target.dataset.projectId}`); showToast('Project deleted.'); navigate('/projects'); } catch (error) { showToast(error.message, 'error'); } return; } if (action === 'leave-project') { if (!window.confirm('Leave this project?')) return; try { await api.delete(`/api/projects/${target.dataset.projectId}/members/me`); showToast('You left the project.'); navigate('/projects'); } catch (error) { showToast(error.message, 'error'); } return; } if (action === 'remove-member') { if (!window.confirm('Remove this member from the project?')) return; try { await api.delete(`/api/projects/${target.dataset.projectId}/members/${target.dataset.userId}`); showToast('Member removed.'); render(); } catch (error) { showToast(error.message, 'error'); } } }
+
+document.addEventListener('click', handleClick);
+document.addEventListener('input', (event) => { if (!event.target.matches('[data-global-search]')) return; state.searchQuery = event.target.value; const results = document.querySelector('#global-search-results'); if (results) results.innerHTML = globalSearchResults(); });
+document.addEventListener('change', async (event) => { const sort = event.target.closest('[data-action="sort-list"]'); if (sort) { state.listSort = sort.value; await render(); return; } const select = event.target.closest('[data-action="role-change"]'); if (!select) return; try { await api.put(`/api/projects/${select.dataset.projectId}/members/${select.dataset.userId}`, { role: select.value }); showToast('Member role updated.'); render(); } catch (error) { showToast(error.message, 'error'); render(); } });
+document.addEventListener('submit', async (event) => { const form = event.target; if (form.matches('#task-filter-form')) { event.preventDefault(); const values = Object.fromEntries(new FormData(form).entries()); state.filters = { search: values.search || '', priority: values.priority || '', labelId: values.labelId || '', due: values.due || '', assignee: values.assignee || '' }; await render(); return; } if (form.matches('#profile-settings-form')) { event.preventDefault(); try { const user = await api.put('/api/users/me', Object.fromEntries(new FormData(form).entries())); state.user = user.user; if (user.user.theme === 'dark' || user.user.theme === 'light') { state.theme = user.user.theme; applyTheme(); } showToast('Profile saved.'); render(); } catch (error) { showToast(error.message, 'error'); } return; } if (form.matches('#password-form')) { event.preventDefault(); try { await api.put('/api/users/me/password', Object.fromEntries(new FormData(form).entries())); form.reset(); showToast('Password updated.'); } catch (error) { showToast(error.message, 'error'); } return; } if (form.matches('#login-form, #register-form')) { event.preventDefault(); const errorBox = form.querySelector('#form-error'); const submit = form.querySelector('button[type="submit"]'); const payload = Object.fromEntries(new FormData(form).entries()); errorBox.classList.remove('visible'); submit.disabled = true; submit.textContent = form.id === 'login-form' ? 'Signing in…' : 'Creating account…'; try { if (form.id === 'login-form') await api.login(payload.identifier, payload.password); else await api.register(payload); showToast(form.id === 'login-form' ? 'Signed in successfully.' : 'Your workspace is ready.'); navigate('/app'); } catch (error) { errorBox.textContent = error.message; errorBox.classList.add('visible'); submit.disabled = false; submit.innerHTML = `${form.id === 'login-form' ? 'Log in' : 'Create account'} ${icon('arrow', 16)}`; } return; } if (form.matches('#project-form, #project-settings-form')) { event.preventDefault(); const submit = form.querySelector('button[type="submit"]'); submit.disabled = true; try { await submitProjectForm(form); } catch (error) { showToast(error.message, 'error'); submit.disabled = false; } return; } if (form.matches('#task-form')) { event.preventDefault(); const submit = form.querySelector('button[type="submit"]'); submit.disabled = true; try { await submitTaskForm(form); } catch (error) { showToast(error.message, 'error'); submit.disabled = false; } return; } if (form.matches('#task-detail-form')) { event.preventDefault(); const taskId = Number(form.querySelector('[name="taskId"]').value); const payload = Object.fromEntries(new FormData(form).entries()); delete payload.taskId; try { await api.put(`/api/tasks/${taskId}`, payload); await api.put(`/api/tasks/${taskId}/assignees`, { userIds: [...document.querySelectorAll('[name="drawerAssigneeIds"]:checked')].map((input) => Number(input.value)) }); await api.put(`/api/tasks/${taskId}/labels`, { labelIds: [...document.querySelectorAll('[name="drawerLabelIds"]:checked')].map((input) => Number(input.value)) }); showToast('Task details saved.'); await render(); await openTaskDrawer(taskId); } catch (error) { showToast(error.message, 'error'); } return; } if (form.matches('#comment-form')) { event.preventDefault(); try { await api.post(`/api/tasks/${state.project.id ? document.querySelector('[name="taskId"]')?.value : ''}/comments`, Object.fromEntries(new FormData(form).entries())); showToast('Comment added.'); const taskId = Number(document.querySelector('[name="taskId"]')?.value); await openTaskDrawer(taskId); } catch (error) { showToast(error.message, 'error'); } return; } if (form.matches('#checklist-form')) { event.preventDefault(); const taskId = Number(document.querySelector('[name="taskId"]')?.value); try { await api.post(`/api/tasks/${taskId}/checklist`, Object.fromEntries(new FormData(form).entries())); await openTaskDrawer(taskId); } catch (error) { showToast(error.message, 'error'); } return; } if (form.matches('#label-form')) { event.preventDefault(); const taskId = Number(document.querySelector('[name="taskId"]')?.value); try { await api.post(`/api/projects/${state.project.id}/labels`, Object.fromEntries(new FormData(form).entries())); showToast('Label created.'); await openTaskDrawer(taskId); } catch (error) { showToast(error.message, 'error'); } return; } if (form.matches('#column-form')) { event.preventDefault(); const submit = form.querySelector('button[type="submit"]'); submit.disabled = true; try { await submitColumnForm(form); } catch (error) { showToast(error.message, 'error'); submit.disabled = false; } return; } if (form.matches('#invite-form')) { event.preventDefault(); const submit = form.querySelector('button[type="submit"]'); submit.disabled = true; try { const result = await api.post(`/api/projects/${state.project.id}/members`, Object.fromEntries(new FormData(form).entries())); state.project = result.project; showToast('Member added to the project.'); render(); } catch (error) { showToast(error.message, 'error'); submit.disabled = false; } } });
+
+document.addEventListener('dragstart', (event) => { const card = event.target.closest('.task-card'); if (!card || card.getAttribute('draggable') !== 'true') return; state.dragTaskId = Number(card.dataset.taskId); card.classList.add('dragging'); event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', String(state.dragTaskId)); });
+document.addEventListener('dragend', (event) => { event.target.closest('.task-card')?.classList.remove('dragging'); state.dragTaskId = null; document.querySelectorAll('.kanban-column.drag-over').forEach((column) => column.classList.remove('drag-over')); });
+document.addEventListener('dragover', (event) => { const column = event.target.closest('[data-column-drop]'); if (!column || !state.dragTaskId) return; event.preventDefault(); column.classList.add('drag-over'); });
+document.addEventListener('dragleave', (event) => { const column = event.target.closest('[data-column-drop]'); if (column && !column.contains(event.relatedTarget)) column.classList.remove('drag-over'); });
+document.addEventListener('drop', async (event) => { const column = event.target.closest('[data-column-drop]'); if (!column || !state.dragTaskId) return; event.preventDefault(); const taskId = state.dragTaskId; const cards = [...column.querySelectorAll('.task-card:not(.dragging)')]; const before = event.target.closest('.task-card'); const position = before && before.parentElement?.closest('[data-column-drop]') === column ? Math.max(0, cards.indexOf(before)) : cards.length; column.classList.remove('drag-over'); state.dragTaskId = null; await moveTask(taskId, Number(column.dataset.columnId), position); });
+window.addEventListener('popstate', render);
+window.addEventListener('keydown', (event) => { if (event.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) { event.preventDefault(); document.querySelector('[data-global-search]')?.focus(); } if (event.key === 'Escape') { document.querySelector('.search-box input')?.blur(); document.querySelector('#modal-root').innerHTML = ''; document.querySelector('#drawer-root').innerHTML = ''; } if (event.key.toLowerCase() === 'n' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && state.user && state.project && canEditTasks(state.project.role)) openTaskModal(state.project); });
+render();
+
+document.addEventListener('input', (event) => { if (!event.target.matches('#comment-form textarea') || !state.socket?.connected || !state.project) return; const taskId = Number(document.querySelector('[name=\"taskId\"]')?.value); state.socket.emit('typing:start', { projectId: state.project.id, taskId }); clearTimeout(window.taskoraTypingTimer); window.taskoraTypingTimer = setTimeout(() => state.socket.emit('typing:stop', { projectId: state.project.id, taskId }), 900); });
