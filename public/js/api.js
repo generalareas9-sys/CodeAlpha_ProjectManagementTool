@@ -1,71 +1,27 @@
-// Taskora API Client
-
-class ApiClient {
-    constructor(baseUrl = '/api') {
-        this.baseUrl = baseUrl;
-    }
-
-    async request(endpoint, options = {}) {
-        const url = endpoint.startsWith('http') ? endpoint : `${this.baseUrl}${endpoint}`;
-        
-        const defaultHeaders = {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-        };
-
-        const config = {
-            ...options,
-            headers: {
-                ...defaultHeaders,
-                ...(options.headers || {})
-            },
-            credentials: 'include' // include cookies for JWT auth
-        };
-
-        if (options.body && typeof options.body === 'object') {
-            config.body = JSON.stringify(options.body);
-        }
-
-        try {
-            const response = await fetch(url, config);
-            const data = await response.json().catch(() => ({
-                success: false,
-                error: 'Invalid response from server'
-            }));
-
-            if (!response.ok) {
-                // If 401 Unauthorized and not already on auth/landing page, we can signal auth state
-                if (response.status === 401 && window.auth && window.auth.currentUser) {
-                    window.auth.handleUnauthorized();
-                }
-                const error = new Error(data.error || `Request failed with status ${response.status}`);
-                error.status = response.status;
-                error.data = data;
-                throw error;
-            }
-
-            return data;
-        } catch (err) {
-            console.error(`API Error [${options.method || 'GET'} ${endpoint}]:`, err);
-            throw err;
-        }
-    }
-
-    get(endpoint, headers = {}) {
-        return this.request(endpoint, { method: 'GET', headers });
-    }
-
-    post(endpoint, body, headers = {}) {
-        return this.request(endpoint, { method: 'POST', body, headers });
-    }
-
-    put(endpoint, body, headers = {}) {
-        return this.request(endpoint, { method: 'PUT', body, headers });
-    }
-
-    delete(endpoint, headers = {}) {
-        return this.request(endpoint, { method: 'DELETE', headers });
-    }
+async function request(path, options = {}) {
+  const response = await fetch(path, {
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    ...options
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(payload?.error?.message || 'Request failed.');
+    error.code = payload?.error?.code;
+    error.status = response.status;
+    error.details = payload?.error?.details;
+    throw error;
+  }
+  return payload.data ?? payload;
 }
 
-window.api = new ApiClient();
+export const api = {
+  get: (path) => request(path),
+  post: (path, body = {}) => request(path, { method: 'POST', body: JSON.stringify(body) }),
+  put: (path, body = {}) => request(path, { method: 'PUT', body: JSON.stringify(body) }),
+  delete: (path) => request(path, { method: 'DELETE' }),
+  me: () => request('/api/auth/me'),
+  login: (identifier, password) => request('/api/auth/login', { method: 'POST', body: JSON.stringify({ identifier, password }) }),
+  register: (payload) => request('/api/auth/register', { method: 'POST', body: JSON.stringify(payload) }),
+  logout: () => request('/api/auth/logout', { method: 'POST' })
+};
