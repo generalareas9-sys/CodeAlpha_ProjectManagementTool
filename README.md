@@ -217,7 +217,7 @@ MIT – see [LICENSE](LICENSE).
 
 6. Open the application in your browser:
 
-   http://localhost:5000/
+   [http://localhost:5000/](http://localhost:5000/)
 
 **Note:** The local URL works only on the computer running the application.
 
