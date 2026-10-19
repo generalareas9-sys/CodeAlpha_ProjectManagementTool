@@ -11,7 +11,8 @@ const users = [
   ['noah', 'noah@taskora.local', 'Noah Williams', '#8B5CF6'],
   ['amira', 'amira@taskora.local', 'Amira Hassan', '#14B8A6'],
   ['ethan', 'ethan@taskora.local', 'Ethan Kim', '#F97316'],
-  ['zoe', 'zoe@taskora.local', 'Zoe Martin', '#EF4444']
+  ['zoe', 'zoe@taskora.local', 'Zoe Martin', '#EF4444'],
+  ['demo', 'demo@taskora.local', 'Demo Account', '#000000']
 ];
 const projects = [
   { name: 'Website Redesign', description: 'A sharper marketing site that turns product clarity into momentum.', color: '#6366F1', icon: 'layout' },
