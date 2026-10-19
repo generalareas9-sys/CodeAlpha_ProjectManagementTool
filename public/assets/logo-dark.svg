@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="190" height="48" viewBox="0 0 190 48" role="img" aria-labelledby="title desc">
+  <title id="title">Taskora</title>
+  <desc id="desc">Taskora connected task tile logo</desc>
+  <defs>
+    <linearGradient id="taskoraGradientDark" x1="4" y1="5" x2="43" y2="43" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#818CF8"/><stop offset=".55" stop-color="#A78BFA"/><stop offset="1" stop-color="#F472B6"/>
+    </linearGradient>
+    <style>
+      .wordmark { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; font-size: 25px; font-weight: 800; letter-spacing: 0; font-variant-ligatures: none; font-feature-settings: 'liga' 0, 'calt' 0; }
+    </style>
+  </defs>
+  <g fill="none" stroke="url(#taskoraGradientDark)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M15 7h12a5 5 0 0 1 5 5v8H10v-8a5 5 0 0 1 5-5Z"/>
+    <path d="M10 20h11a5 5 0 0 1 5 5v8H15a5 5 0 0 1-5-5v-8Z"/>
+    <path d="M32 20h11v8a5 5 0 0 1-5 5H27v-8a5 5 0 0 1 5-5Z"/>
+  </g>
+  <text class="wordmark" x="58" y="33" fill="#F3F4FB">Taskora</text>
+</svg>
